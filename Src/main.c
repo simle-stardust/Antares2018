@@ -52,6 +52,18 @@
 #include "fatfs.h"
 
 /* USER CODE BEGIN Includes */
+#include "string.h"
+
+#define PressureSensorAddr (0x28 << 1)
+#define DS3231Addr (0b1101000 << 1)
+#define GeigerAddr (0x08 << 1)
+#define MAX30205Addr (0b1001000 << 1)
+#define HDC1080Addr (0b1000000 << 1)
+#define INA3221Addr (0b1000010 << 1)
+
+#define L3GD20HAddr     (0b1101011 << 1)	//gyro
+#define LSM303DAddr  	(0b0011101 << 1)	//acc and magn
+#define LPS331APAddr  	(0b1011101 << 1)	//baro
 
 /* USER CODE END Includes */
 
@@ -78,18 +90,25 @@ osThreadId LoraTaskHandle;
 osThreadId WIFITaskHandle;
 osThreadId BLETaskHandle;
 osThreadId WatchdogTaskHandle;
+osThreadId DS18TaskHandle;
 osMessageQId qFromGPSHandle;
 osMessageQId qToLoraHandle;
 osMessageQId qFromLoraHandle;
 osMessageQId qToWatchdogHandle;
 osMessageQId qToWIFIHandle;
 osMessageQId qToBLEHandle;
+osMessageQId qFromDS18Handle;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 FATFS my_fatfs;
 FIL my_file;
 UINT my_error;
+
+static const uint64_t DSAddr[7] =
+{ 0x28997F8D0A000015, 0x28197C8D0A0000B1, 0x28F44E8D0A0000D5,
+		0x28545C8D0A000076, 0x28545C8D0A000076, 0x28545C8D0A000076,
+		0x28545C8D0A000076 };
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -110,6 +129,7 @@ void StartLoraTask(void const * argument);
 void StartWIFITask(void const * argument);
 void StartBLETask(void const * argument);
 void StartWatchdogTask(void const * argument);
+void StartDS18Task(void const * argument);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
@@ -192,6 +212,10 @@ int main(void)
 	osThreadDef(WatchdogTask, StartWatchdogTask, osPriorityNormal, 0, 128);
 	WatchdogTaskHandle = osThreadCreate(osThread(WatchdogTask), NULL);
 
+	/* definition and creation of DS18Task */
+	osThreadDef(DS18Task, StartDS18Task, osPriorityIdle, 0, 128);
+	DS18TaskHandle = osThreadCreate(osThread(DS18Task), NULL);
+
 	/* USER CODE BEGIN RTOS_THREADS */
 	/* add threads, ... */
 	/* USER CODE END RTOS_THREADS */
@@ -220,6 +244,10 @@ int main(void)
 	/* definition and creation of qToBLE */
 	osMessageQDef(qToBLE, 4, uint8_t);
 	qToBLEHandle = osMessageCreate(osMessageQ(qToBLE), NULL);
+
+	/* definition and creation of qFromDS18 */
+	osMessageQDef(qFromDS18, 7, uint16_t);
+	qFromDS18Handle = osMessageCreate(osMessageQ(qFromDS18), NULL);
 
 	/* USER CODE BEGIN RTOS_QUEUES */
 	/* add queues, ... */
@@ -605,49 +633,180 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
-/* USER CODE END 4 */
-
-/* StartCommandTask function */
-void StartCommandTask(void const * argument)
+static void delayMicroseconds(uint32_t time)
 {
-	/* init code for FATFS */
-	MX_FATFS_Init();
+	__HAL_TIM_SET_COUNTER(&htim7, 0);
+	__HAL_TIM_ENABLE(&htim7);
+	while (__HAL_TIM_GET_COUNTER(&htim7) <= time)
+		;
+	__HAL_TIM_DISABLE(&htim7);
+}
 
-	/* USER CODE BEGIN 5 */
-	FRESULT fresult;
-	const char my_file_name[] = "datalog.txt";
-	uint32_t fileSize;
-	/* Infinite loop */
-	for (;;)
+static void oneWireResetPulse(void)
+{
+	HAL_GPIO_WritePin(OneWire_GPIO_Port, OneWire_Pin, GPIO_PIN_RESET);
+	for (int i = 1; i <= 48; ++i)
 	{
-		fresult = f_mount(&my_fatfs, SD_Path, 1);
+		delayMicroseconds(10);
+	}
+	HAL_GPIO_WritePin(OneWire_GPIO_Port, OneWire_Pin, GPIO_PIN_SET);
+	for (int i = 1; i <= 150; ++i)
+	{
+		delayMicroseconds(10);
+	}
+}
+
+static void oneWireSendBit(uint16_t bit)
+{
+	if (bit == 0)
+	{
+		HAL_GPIO_WritePin(OneWire_GPIO_Port, OneWire_Pin, GPIO_PIN_RESET);
+		delayMicroseconds(65);
+		HAL_GPIO_WritePin(OneWire_GPIO_Port, OneWire_Pin, GPIO_PIN_SET);
+		delayMicroseconds(10);
+	}
+	else
+	{
+		HAL_GPIO_WritePin(OneWire_GPIO_Port, OneWire_Pin, GPIO_PIN_RESET);
+		delayMicroseconds(10);
+		HAL_GPIO_WritePin(OneWire_GPIO_Port, OneWire_Pin, GPIO_PIN_SET);
+		delayMicroseconds(65);
+	}
+}
+
+static uint16_t oneWireReadBit(void)
+{
+	uint16_t bit = 0;
+	HAL_GPIO_WritePin(OneWire_GPIO_Port, OneWire_Pin, GPIO_PIN_RESET);
+	delayMicroseconds(5);
+	HAL_GPIO_WritePin(OneWire_GPIO_Port, OneWire_Pin, GPIO_PIN_SET);
+	delayMicroseconds(5);
+
+	if (HAL_GPIO_ReadPin(OneWire_GPIO_Port, OneWire_Pin) == GPIO_PIN_SET)
+		bit = 1;
+	else
+		bit = 0;
+	delayMicroseconds(55);
+	return bit;
+}
+
+static void oneWireSendByte(uint16_t value)
+{
+	uint16_t i, tmp;
+	for (i = 0; i < 8; ++i)
+	{
+		tmp = value >> i;
+		tmp &= 0x01;
+		oneWireSendBit(tmp);
+	}
+}
+
+static uint16_t oneWireReadByte(void)
+{
+	uint16_t i, value = 0;
+	for (i = 0; i < 8; ++i)
+	{
+		if (oneWireReadBit())
+			value |= 0x01 << i;
+	}
+	return value;
+}
+
+static void DS18B20ConvertTemperature()
+{
+	__disable_irq();
+	HAL_GPIO_WritePin(OneWire_PULLUP_GPIO_Port, OneWire_PULLUP_Pin,
+			GPIO_PIN_SET);
+	oneWireResetPulse();
+	oneWireSendByte(0xCC);
+	oneWireSendByte(0x44);
+	__enable_irq();
+	osDelay(750);
+	HAL_GPIO_WritePin(OneWire_PULLUP_GPIO_Port, OneWire_PULLUP_Pin,
+			GPIO_PIN_RESET);
+}
+
+static int16_t ReadDS18B20(uint64_t ROM)
+{
+	int16_t iTemperatura = 0;
+	uint8_t CalculatedCRC = 0;
+	uint8_t memory[9];
+	__disable_irq();
+	oneWireResetPulse();
+	oneWireSendByte(0x55);
+	oneWireSendByte((ROM >> 56) & 0xFF);
+	oneWireSendByte((ROM >> 48) & 0xFF);
+	oneWireSendByte((ROM >> 40) & 0xFF);
+	oneWireSendByte((ROM >> 32) & 0xFF);
+	oneWireSendByte((ROM >> 24) & 0xFF);
+	oneWireSendByte((ROM >> 16) & 0xFF);
+	oneWireSendByte((ROM >> 8) & 0xFF);
+	oneWireSendByte(ROM & 0xFF);
+	oneWireSendByte(0xBE);
+	for (int i = 0; i <= 8; ++i)
+	{
+		memory[i] = oneWireReadByte();
+	}
+	oneWireResetPulse();
+	__enable_irq();
+	for (uint8_t i = 0; i < 8; i++)
+	{
+		uint8_t inbyte = memory[i];
+		for (uint8_t j = 0; j < 8; j++)
+		{
+			uint8_t mix = (CalculatedCRC ^ inbyte) & 0x01;
+			CalculatedCRC >>= 1;
+			if (mix)
+				CalculatedCRC ^= 0x8C;
+			inbyte >>= 1;
+		}
+	}
+	memory[1] &= 0x0F;
+	memory[1] = (memory[1] << 4);
+	iTemperatura = (memory[1] << 4);
+	iTemperatura += memory[0];
+	iTemperatura = (iTemperatura * 100) / 16;
+	if (CalculatedCRC != memory[8])
+		iTemperatura = 40400;
+	return iTemperatura;
+}
+
+static inline void WriteToSD(uint8_t mode, uint8_t* buf, uint8_t len)
+{
+	FRESULT fresult;
+	const char my_file_name[] = "datalog.bin";
+	uint32_t fileSize;
+	fresult = f_mount(&my_fatfs, SD_Path, 1);
+	if (fresult == FR_OK)
+	{
+		fresult = f_open(&my_file, my_file_name,
+		FA_WRITE | FA_OPEN_ALWAYS);
+		fileSize = f_size(&my_file);
 		if (fresult == FR_OK)
 		{
-			fresult = f_open(&my_file, my_file_name,
-			FA_WRITE | FA_OPEN_ALWAYS);
-			fileSize = f_size(&my_file);
+			fresult = f_lseek(&my_file, fileSize);
+			if (mode == 0)
+			{
+				fresult = f_write(&my_file, (const void*)0x00, 1, &my_error);
+				fresult = f_write(&my_file, buf, len, &my_error);
+			}
+			else
+			{
+				fresult = f_write(&my_file, (const void*)0x01, 1, &my_error);
+				fresult = f_write(&my_file, buf, len, &my_error);
+			}
 			if (fresult == FR_OK)
 			{
-				fresult = f_lseek(&my_file, fileSize);
-				fresult = f_write(&my_file, "asd", 3, &my_error);
+				fresult = f_close(&my_file);
 				if (fresult == FR_OK)
 				{
-					fresult = f_close(&my_file);
-					if (fresult == FR_OK)
-					{
-						HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_SET);
-					}
-					else
-					{
-						HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_RESET);
-					}
-
+					HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_SET);
 				}
 				else
 				{
 					HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_RESET);
 				}
+
 			}
 			else
 			{
@@ -658,7 +817,72 @@ void StartCommandTask(void const * argument)
 		{
 			HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_RESET);
 		}
-		fresult = f_mount(0, SD_Path, 0);
+	}
+	else
+	{
+		HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_RESET);
+	}
+	fresult = f_mount(0, SD_Path, 0);
+}
+
+static uint8_t ReadI2CSensors(uint8_t* buf)
+{
+	uint8_t i2cData[3];
+	uint16_t calc;
+	uint8_t returnCode = 0;
+	memset(i2cData, 0, sizeof(i2cData));
+	if (HAL_I2C_Mem_Read(&hi2c2, DS3231Addr, 0x00, 1, i2cData, 3, 100)
+			== HAL_OK)
+	{
+		buf[0] = ((i2cData[0] & 0b01110000) >> 4) * 10
+				+ (i2cData[0] & 0b00001111);
+		buf[1] = ((i2cData[1] & 0b01110000) >> 4) * 10
+				+ (i2cData[1] & 0b00001111);
+		buf[2] = ((i2cData[2] & 0b01110000) >> 4) * 10
+				+ (i2cData[2] & 0b00001111);
+	}
+	else
+	{
+		returnCode |= 0x01;
+	}
+
+	memset(i2cData, 0, sizeof(i2cData));
+
+	if (HAL_I2C_Master_Receive(&hi2c2, PressureSensorAddr, (uint8_t*) i2cData,
+			2, 100) == HAL_OK)
+	{
+		calc = (((i2cData[0] << 8) + i2cData[1]) - 1638) * 15 * 100 / 13107;
+		buf[3] = (uint8_t) (calc >> 8);
+		buf[4] = (uint8_t) (calc & 0xFF);
+	}
+	else
+	{
+		returnCode |= 0x02;
+	}
+
+	return returnCode;
+}
+/* USER CODE END 4 */
+
+/* StartCommandTask function */
+void StartCommandTask(void const * argument)
+{
+	/* init code for FATFS */
+	MX_FATFS_Init();
+
+	/* USER CODE BEGIN 5 */
+	uint8_t SDBuffer[64];
+	uint8_t ErrBuff;
+
+	/* Infinite loop */
+	for (;;)
+	{
+		ErrBuff = ReadI2CSensors(SDBuffer);
+		if (ErrBuff)
+			WriteToSD(1, &ErrBuff, 1);
+
+		WriteToSD(0, SDBuffer, 10);
+		HAL_GPIO_TogglePin(D2_GPIO_Port, D2_Pin);
 		osDelay(1000);
 	}
 	/* USER CODE END 5 */
@@ -710,6 +934,27 @@ void StartWatchdogTask(void const * argument)
 		osDelay(1);
 	}
 	/* USER CODE END StartWatchdogTask */
+}
+
+/* StartDS18Task function */
+void StartDS18Task(void const * argument)
+{
+	/* USER CODE BEGIN StartDS18Task */
+	int16_t DS18B20Temp[7];
+	uint32_t BeginTick = 0;
+	/* Infinite loop */
+	for (;;)
+	{
+		BeginTick = osKernelSysTick();
+		DS18B20ConvertTemperature();
+		for (int i = 0; i < 7; i++)
+		{
+			DS18B20Temp[i] = ReadDS18B20(DSAddr[i]);
+			xQueueSend(qFromDS18Handle, &DS18B20Temp[i], 10);
+		}
+		osDelayUntil(&BeginTick, 5000);
+	}
+	/* USER CODE END StartDS18Task */
 }
 
 /**
