@@ -4,6 +4,7 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
+../Src/aes.c \
 ../Src/bsp_driver_sd.c \
 ../Src/fatfs.c \
 ../Src/freertos.c \
@@ -14,6 +15,7 @@ C_SRCS += \
 ../Src/system_stm32l1xx.c 
 
 OBJS += \
+./Src/aes.o \
 ./Src/bsp_driver_sd.o \
 ./Src/fatfs.o \
 ./Src/freertos.o \
@@ -24,6 +26,7 @@ OBJS += \
 ./Src/system_stm32l1xx.o 
 
 C_DEPS += \
+./Src/aes.d \
 ./Src/bsp_driver_sd.d \
 ./Src/fatfs.d \
 ./Src/freertos.d \

@@ -33,6 +33,7 @@
 "Middlewares/Third_Party/FreeRTOS/Source/timers.o"
 "Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM3/port.o"
 "Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.o"
+"Src/aes.o"
 "Src/bsp_driver_sd.o"
 "Src/fatfs.o"
 "Src/freertos.o"
