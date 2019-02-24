@@ -56,6 +56,8 @@
 #include "stdlib.h"
 #include "aes.h"
 
+#define GPS_RXBUF_SIZE    512
+
 #define PressureSensorAddr (0x28 << 1)
 #define DS3231Addr (0b1101000 << 1)
 #define GeigerAddr (0x08 << 1)
@@ -182,8 +184,10 @@ osMessageQId qFromWifiErrHandle;
 FATFS my_fatfs;
 FIL my_file;
 UINT my_error;
-uint8_t GPSchar;
+volatile uint8_t GpsRxBuf[GPS_RXBUF_SIZE];
+volatile uint8_t GpsRxFlag = 0;
 volatile uint8_t WifiRxFlag = 0;
+volatile uint16_t GpsToReadNb = 0;
 static const uint64_t DSAddr[7] =
 { 0x28997F8D0A000015, 0x28197C8D0A0000B1, 0x28F44E8D0A0000D5,
 		0x28545C8D0A000076, 0x28545C8D0A000076, 0x28545C8D0A000076,
@@ -221,9 +225,37 @@ static uint8_t LoraTransmitByte(uint8_t *data, uint8_t size);
 
 void USART2_IRQHandler()
 {
-	if (((USART2->SR) & USART_SR_RXNE) > 0)
-		GPSchar = USART2->DR;
-	xQueueSendFromISR(qFromGPSHandle, &GPSchar, NULL);
+	volatile uint32_t dummy;
+	if (((USART2->SR) & USART_SR_IDLE) > 0)
+	{
+		// clear by reading dr
+		dummy = USART2->SR;
+		dummy = USART2->DR;
+		(void)dummy;
+		//GpsRxFlag = 1;
+		DMA1_Channel6->CCR &= ~DMA_CCR_EN;
+		USART2->CR1 &= ~USART_CR1_IDLEIE;
+		GpsToReadNb = GPS_RXBUF_SIZE - DMA1_Channel6->CNDTR;
+		DMA1_Channel6->CMAR = (uint32_t)GpsRxBuf;
+		DMA1_Channel6->CNDTR = GPS_RXBUF_SIZE;
+		// disable dma
+	}
+}
+
+void DMA1_Channel6_IRQHandler()
+{
+	//clear interrupt flag
+	if (((DMA1->ISR) & (DMA_ISR_TCIF6)))
+	{
+		DMA1->IFCR |= DMA_IFCR_CTCIF6;
+		GpsRxFlag = 1;
+		GpsToReadNb = GPS_RXBUF_SIZE - DMA1_Channel6->CNDTR;
+
+		//DMA1_Channel6->CMAR = (uint32_t)GpsRxBuf;
+		//DMA1_Channel6->CNDTR = GPS_RXBUF_SIZE;
+		// disable dma
+		//DMA1_Channel6->CCR &= ~DMA_CCR_EN;
+	}
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
@@ -719,6 +751,7 @@ static void MX_GPIO_Init(void)
 static void UART_Init()
 {
 	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;	//clock enable for UART1
+	RCC->AHBENR |= RCC_AHBENR_DMA1EN;
 	//alternate functions of PA9 and PA10 set to UART1 AF=7
 	GPIOA->AFR[0] |= (0x00000700 & GPIO_AFRL_AFSEL2);
 	GPIOA->AFR[0] |= (0x00007000 & GPIO_AFRL_AFSEL3);
@@ -728,11 +761,18 @@ static void UART_Init()
 
 	NVIC_SetPriority(USART2_IRQn, 0x05);
 	NVIC_EnableIRQ(USART2_IRQn);			// set enable IRQ
-
+	NVIC_SetPriority(DMA1_Channel6_IRQn, 0x05);
+	NVIC_EnableIRQ(DMA1_Channel6_IRQn);
 	USART2->BRR = 3333;						//baud rate = 9600
-	// usart+transmitter+receiver enable
-	USART2->CR1 = USART_CR1_UE | USART_CR1_RE | USART_CR1_RXNEIE;
 
+	DMA1_Channel6->CMAR = (uint32_t)GpsRxBuf;
+	DMA1_Channel6->CPAR = (uint32_t)&(USART2->DR);
+	DMA1_Channel6->CNDTR = GPS_RXBUF_SIZE;
+	DMA1_Channel6->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_TCIE | DMA_CCR_EN;
+
+	USART2->CR3 |= USART_CR3_DMAR;
+	USART2->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_IDLEIE;
+	//USART2->CR1 |= USART_CR1_UE | USART_CR1_RE;
 }
 
 static inline uint8_t setBit(uint8_t value, uint8_t bit)
@@ -1125,8 +1165,6 @@ static uint16_t ReadI2CSensors(uint8_t* buf)
 static uint16_t ReadGPS(gps_data_t* gps)
 {
 	uint16_t returnCode = 0;
-	uint8_t ReceivedGPS;
-	char linijkaGPS[100];
 	uint8_t GPSReadChecksum = 0;
 	uint8_t GPSCalcChecksum = 1;
 	int32_t altitude = 0;
@@ -1138,55 +1176,45 @@ static uint16_t ReadGPS(gps_data_t* gps)
 	static char Longtitude[11] =
 	{ '0', '0', '0', '0', '0', '.', '0', '0', '0', '0', '0' };
 	;
-	int licznik2 = 0;
-	while (xQueueReceive(qFromGPSHandle, &ReceivedGPS, 1))
+	if (GpsRxFlag)
 	{
-		if (ReceivedGPS == 0x0A)
+		GpsRxFlag=0;
+		if (strncmp(GpsRxBuf, "$GPGGA", 6) == 0) //znaleziono gngga
 		{
-			if (strncmp(linijkaGPS, "$GPGGA", 6) == 0) //znaleziono gngga
+			GPSCalcChecksum = GpsRxBuf[1];
+			for (int i = 2; i <= 100; ++i)
 			{
-				GPSCalcChecksum = linijkaGPS[1];
-				for (int i = 2; i <= 100; ++i)
-				{
-					if (linijkaGPS[i] == 0x2A)
-						break;
-					else
-						GPSCalcChecksum ^= linijkaGPS[i];
-				}
-				char *schowek;
-				strtok(linijkaGPS, ",");
-				schowek = strtok(NULL, ",");
-				strcpy(czasGPS, schowek);
-				schowek = strtok(NULL, ",");
-				strcpy(Lattitude, schowek);
-				schowek = strtok(NULL, ",");
-				LiterkaLat = *schowek;
-				schowek = strtok(NULL, ",");
-				strcpy(Longtitude, schowek);
-				schowek = strtok(NULL, ",");
-				LiterkaLon = *schowek;
-				schowek = strtok(NULL, ",");
-				schowek = strtok(NULL, ",");
-				schowek = strtok(NULL, ",");
-				schowek = strtok(NULL, ",");
-				altitude = (int32_t) strtol(schowek, NULL, 10);
-				schowek = strtok(NULL, "*");
-				schowek = strtok(NULL, "\r");
-
-				GPSReadChecksum = strtol(schowek, NULL, 16);
+				if (GpsRxBuf[i] == 0x2A)
+					break;
+				else
+					GPSCalcChecksum ^= GpsRxBuf[i];
 			}
-			licznik2 = 0;
-			memset(linijkaGPS, 0, sizeof linijkaGPS);
+			char *schowek;
+			strtok(GpsRxBuf, ",");
+			schowek = strtok(NULL, ",");
+			strcpy(czasGPS, schowek);
+			schowek = strtok(NULL, ",");
+			strcpy(Lattitude, schowek);
+			schowek = strtok(NULL, ",");
+			LiterkaLat = *schowek;
+			schowek = strtok(NULL, ",");
+			strcpy(Longtitude, schowek);
+			schowek = strtok(NULL, ",");
+			LiterkaLon = *schowek;
+			schowek = strtok(NULL, ",");
+			schowek = strtok(NULL, ",");
+			schowek = strtok(NULL, ",");
+			schowek = strtok(NULL, ",");
+			altitude = (int32_t) strtol(schowek, NULL, 10);
+			schowek = strtok(NULL, "*");
+			schowek = strtok(NULL, "\r");
+			GPSReadChecksum = strtol(schowek, NULL, 16);
 		}
-		else
-		{
-			linijkaGPS[licznik2] = ReceivedGPS;
-			licznik2++;
-			if (licznik2 == 100)
-				licznik2 = 0;
-		}
+		//memset(GpsRxBuf, 0, sizeof GpsRxBuf);
+		DMA1_Channel6->CCR |= DMA_CCR_EN;
+		USART2->CR1 |= USART_CR1_IDLEIE;
 	}
-	memset(linijkaGPS, 0, sizeof linijkaGPS);
+	//reenable DMA
 	if (GPSCalcChecksum != GPSReadChecksum)
 	{
 		returnCode = GPS_ERR;
@@ -1312,6 +1340,7 @@ void StartCommandTask(void const * argument)
 				break;
 			case 0x5555:
 				odcinaczFlag = 1;
+				ErrBuff |= ODCINACZ_SET;
 				xQueueSend(qToWifiHandle, &odcinaczFlag, 0);
 				break;
 			default:
@@ -1521,11 +1550,12 @@ void StartWIFITask(void const * argument)
 		TxBuffer[65] = (setData.status >> 8);
 		TxBuffer[66] = (setData.status & 0xFF);
 		TxBuffer[67] = '!';
-		HAL_UART_Transmit(&huart1, (uint8_t*)TxBuffer, 68, 100);
+		HAL_UART_Transmit(&huart1, (uint8_t*) TxBuffer, 68, 100);
 		osDelay(300);
 		strcpy(TxBuffer, GetCommand);
-		HAL_UART_Transmit(&huart1, (uint8_t*)TxBuffer, sizeof(GetCommand), 100);
-		HAL_UART_Receive_IT(&huart1, (uint8_t*)RxBuffer, sizeof(RxBuffer));
+		HAL_UART_Transmit(&huart1, (uint8_t*) TxBuffer, sizeof(GetCommand),
+				100);
+		HAL_UART_Receive_IT(&huart1, (uint8_t*) RxBuffer, sizeof(RxBuffer));
 		osDelay(200);
 		if (WifiRxFlag & (strstr(RxBuffer, Ok) != NULL))
 		{
@@ -1559,7 +1589,8 @@ void StartWIFITask(void const * argument)
 		xQueueReceive(qToWifiHandle, &odcinaczFlag, 0);
 		if (odcinaczFlag == 1)
 		{
-			HAL_UART_Transmit(&huart1, (uint8_t*)CutCommand, sizeof(CutCommand), 100);
+			HAL_UART_Transmit(&huart1, (uint8_t*) CutCommand,
+					sizeof(CutCommand), 100);
 		}
 		xQueueSend(qFromWifiHandle, &tempInfo, 0);
 		osDelayUntil(&tick, 1000);
