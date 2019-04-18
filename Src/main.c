@@ -337,7 +337,7 @@ int main(void)
 	LoraTaskHandle = osThreadCreate(osThread(LoraTask), NULL);
 
 	/* definition and creation of WIFITask */
-	osThreadDef(WIFITask, StartWIFITask, osPriorityNormal, 0, 128);
+	osThreadDef(WIFITask, StartWIFITask, osPriorityNormal, 0, 512);
 	WIFITaskHandle = osThreadCreate(osThread(WIFITask), NULL);
 
 	/* definition and creation of WatchdogTask */
@@ -359,39 +359,39 @@ int main(void)
 	/* Create the queue(s) */
 	/* definition and creation of qFromGPS */
 	osMessageQDef(qFromGPS, 4, gps_data_t);
-	qFromGPSHandle = osMessageCreate(osMessageQ(qFromGPS), NULL);
+	qFromGPSHandle = osMessageCreate(osMessageQ(qFromGPS), 0);
 
 	/* definition and creation of qToLora */
 	osMessageQDef(qToLora, 5, loraUPframe_t);
-	qToLoraHandle = osMessageCreate(osMessageQ(qToLora), NULL);
+	qToLoraHandle = osMessageCreate(osMessageQ(qToLora), 0);
 
 	/* definition and creation of qFromLora */
 	osMessageQDef(qFromLora, 10, uint16_t);
-	qFromLoraHandle = osMessageCreate(osMessageQ(qFromLora), NULL);
+	qFromLoraHandle = osMessageCreate(osMessageQ(qFromLora), 0);
 
 	/* definition and creation of qToWatchdog */
 	osMessageQDef(qToWatchdog, 5, uint8_t);
-	qToWatchdogHandle = osMessageCreate(osMessageQ(qToWatchdog), NULL);
+	qToWatchdogHandle = osMessageCreate(osMessageQ(qToWatchdog), 0);
 
 	/* definition and creation of qToWifi */
 	osMessageQDef(qToWifi, 2, uint8_t);
-	qToWifiHandle = osMessageCreate(osMessageQ(qToWifi), NULL);
+	qToWifiHandle = osMessageCreate(osMessageQ(qToWifi), 0);
 
 	/* definition and creation of qFromWifi */
 	osMessageQDef(qFromWifi, 4, loraTempInfo_t);
-	qFromWifiHandle = osMessageCreate(osMessageQ(qFromWifi), NULL);
+	qFromWifiHandle = osMessageCreate(osMessageQ(qFromWifi), 0);
 
 	/* definition and creation of qFromDS18 */
 	osMessageQDef(qFromDS18, 2, ds18b20_t);
-	qFromDS18Handle = osMessageCreate(osMessageQ(qFromDS18), NULL);
+	qFromDS18Handle = osMessageCreate(osMessageQ(qFromDS18), 0);
 
 	/* definition and creation of qToWifiSetVal */
 	osMessageQDef(qToWifiSetVal, 2, wifi_set_t);
-	qToWifiSetValHandle = osMessageCreate(osMessageQ(qToWifiSetVal), NULL);
+	qToWifiSetValHandle = osMessageCreate(osMessageQ(qToWifiSetVal), 0);
 
 	/* definition and creation of qFromWifiErr */
 	osMessageQDef(qFromWifiErr, 1, uint8_t);
-	qFromWifiErrHandle = osMessageCreate(osMessageQ(qFromWifiErr), NULL);
+	qFromWifiErrHandle = osMessageCreate(osMessageQ(qFromWifiErr), 0);
 
 	/* USER CODE BEGIN RTOS_QUEUES */
 	/* add queues, ... */
@@ -1106,27 +1106,25 @@ static int16_t ReadDS18B20(uint64_t ROM)
 
 static inline uint16_t WriteToSD(uint8_t* buf, uint8_t len)
 {
-	char my_file_name[] = "datalog .txt";
+	char my_file_name[20];
 	static uint8_t datalogNum = 0;
 	uint16_t returnCode = 0;
 	FRESULT fresult;
 	uint32_t fileSize;
 
-	my_file_name[7] = datalogNum + '0';
+	sprintf(my_file_name, "datalog%d.txt", datalogNum);
 	__disable_irq();
-	fresult = f_open(&my_file, my_file_name,
-	FA_WRITE | FA_OPEN_ALWAYS);
+	fresult = f_open(&my_file, my_file_name, FA_WRITE | FA_OPEN_ALWAYS);
 	fileSize = f_size(&my_file);
 	if (fileSize > 1000000)
 	{
 		datalogNum++;
-		my_file_name[7] = datalogNum + '0';
+		sprintf(my_file_name, "datalog%d.txt", datalogNum);
 	}
 	fresult = f_close(&my_file);
 	__enable_irq();
 	__disable_irq();
-	fresult = f_open(&my_file, my_file_name,
-		FA_WRITE | FA_OPEN_ALWAYS);
+	fresult = f_open(&my_file, my_file_name, FA_WRITE | FA_OPEN_ALWAYS);
 	if (fresult == FR_OK)
 	{
 		fresult = f_lseek(&my_file, fileSize);
@@ -1257,7 +1255,7 @@ static gps_data_t GpsParse(const char* data)
 	}
 	strtok(&ptr[0], ",");
 	schowek = strtok(NULL, ",");
-	strcpy(returnBuf.czasGPS,schowek);
+	strcpy(returnBuf.czasGPS, schowek);
 	schowek = strtok(NULL, ",");
 	returnBuf.lat = (uint32_t) (strtof(schowek, NULL) * 100000);
 	schowek = strtok(NULL, ",");
@@ -1537,8 +1535,9 @@ void StartWIFITask(void const * argument)
 	const char GetCommand[] = "@MarcinGetValues!";
 	const char SetCommand[] = "@MarcinSetValues:";
 	const char Ok[] = "@MarcinOK:";
-	char TxBuffer[68];
+	char TxBuffer[192];
 	char RxBuffer[49];
+	uint8_t TxBufLen = 0;
 	int16_t temps[12];
 	uint8_t odcinaczFlag = 0;
 	uint8_t error = 0;
@@ -1555,59 +1554,15 @@ void StartWIFITask(void const * argument)
 	{
 		tick = osKernelSysTick();
 		xQueueReceive(qToWifiSetValHandle, &setData, 200);
-		strcpy(TxBuffer, SetCommand);
-		TxBuffer[17] = setData.h;
-		TxBuffer[18] = ',';
-		TxBuffer[19] = setData.m;
-		TxBuffer[20] = ',';
-		TxBuffer[21] = setData.s;
-		TxBuffer[22] = ',';
-		TxBuffer[23] = (setData.ds18[0] >> 8);
-		TxBuffer[24] = (setData.ds18[0] & 0xFF);
-		TxBuffer[25] = ',';
-		TxBuffer[26] = (setData.ds18[1] >> 8);
-		TxBuffer[27] = (setData.ds18[1] & 0xFF);
-		TxBuffer[28] = ',';
-		TxBuffer[29] = (setData.ds18[2] >> 8);
-		TxBuffer[30] = (setData.ds18[2] & 0xFF);
-		TxBuffer[31] = ',';
-		TxBuffer[32] = (setData.ds18[3] >> 8);
-		TxBuffer[33] = (setData.ds18[3] & 0xFF);
-		TxBuffer[34] = ',';
-		TxBuffer[35] = (setData.ds18[4] >> 8);
-		TxBuffer[36] = (setData.ds18[4] & 0xFF);
-		TxBuffer[37] = ',';
-		TxBuffer[38] = (setData.ds18[5] >> 8);
-		TxBuffer[39] = (setData.ds18[5] & 0xFF);
-		TxBuffer[40] = ',';
-		TxBuffer[41] = (setData.ds18[6] >> 8);
-		TxBuffer[42] = (setData.ds18[6] & 0xFF);
-		TxBuffer[43] = ',';
-		TxBuffer[44] = (setData.hum >> 8);
-		TxBuffer[45] = (setData.hum & 0xFF);
-		TxBuffer[46] = ',';
-		TxBuffer[47] = (setData.press >> 8);
-		TxBuffer[48] = (setData.press & 0xFF);
-		TxBuffer[49] = ',';
-		TxBuffer[50] = (setData.lat >> 24);
-		TxBuffer[51] = (setData.lat >> 16);
-		TxBuffer[52] = (setData.lat >> 8);
-		TxBuffer[53] = (setData.lat & 0xFF);
-		TxBuffer[54] = ',';
-		TxBuffer[55] = (setData.lon >> 24);
-		TxBuffer[56] = (setData.lon >> 16);
-		TxBuffer[57] = (setData.lon >> 8);
-		TxBuffer[58] = (setData.lon & 0xFF);
-		TxBuffer[59] = ',';
-		TxBuffer[60] = (setData.alt >> 24);
-		TxBuffer[61] = (setData.alt >> 16);
-		TxBuffer[62] = (setData.alt >> 8);
-		TxBuffer[63] = (setData.alt & 0xFF);
-		TxBuffer[64] = ',';
-		TxBuffer[65] = (setData.status >> 8);
-		TxBuffer[66] = (setData.status & 0xFF);
-		TxBuffer[67] = '!';
-		HAL_UART_Transmit(&huart1, (uint8_t*) TxBuffer, 68, 100);
+		TxBufLen =
+				sprintf((char*) TxBuffer,
+						"@MarcinSetValues:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lu,%lu,%ld,%d!\r\n",
+						setData.h, setData.m, setData.s, setData.ds18[0],
+						setData.ds18[1], setData.ds18[2], setData.ds18[3],
+						setData.ds18[4], setData.ds18[5], setData.ds18[6],
+						setData.hum, setData.press, setData.lat, setData.lon,
+						setData.alt, setData.status);
+		HAL_UART_Transmit(&huart1, (uint8_t*) TxBuffer, TxBufLen, 100);
 		osDelay(300);
 		strcpy(TxBuffer, GetCommand);
 		HAL_UART_Transmit(&huart1, (uint8_t*) TxBuffer, sizeof(GetCommand),
