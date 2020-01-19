@@ -1104,7 +1104,7 @@ static int16_t ReadDS18B20(uint64_t ROM)
 	return iTemperatura;
 }
 
-static inline uint16_t WriteToSD(uint8_t* buf, uint8_t len)
+static uint16_t WriteToSD(uint8_t* buf, uint8_t len)
 {
 	char my_file_name[20];
 	static uint8_t datalogNum = 0;
