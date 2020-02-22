@@ -52,3 +52,7 @@ Mkfile.old
 dkms.conf
 *.bin
 /Debug/
+
+.settings/
+.vscode/
+HAB_Antares2018.cfg

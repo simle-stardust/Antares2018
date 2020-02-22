@@ -1332,31 +1332,52 @@ void StartCommandTask(void const * argument)
 			xQueueSend(qToLoraHandle, &DataToSend, 2);
 		}
 		//----------------- LORA Reception -------------------------------------
-		xQueueReceive(qFromLoraHandle, &LoraDnMsg, 5);
-		switch (LoraDnMsg)
+		if (xQueueReceive(qFromLoraHandle, &LoraDnMsg, 5) == pdTRUE)
 		{
-		case 0xFFFF:
-			ErrBuff |= LORA_NORX;
-			break;
-		case 0xFFFE:
-			ErrBuff |= LORA_FAULT;
-			break;
-		case 0x5555:
-			odcinaczFlag = 1;
-			xQueueSend(qToWifiHandle, &odcinaczFlag, 0);
-			break;
-		default:
-			ErrBuff &= ~LORA_FAULT;
-			ErrBuff &= ~LORA_NORX;
-			//parse downlink message;
-			//set some flag to dont parse it every loop iteration
-			break;
+			switch (LoraDnMsg)
+			{
+				case 0xFFFF:
+					ErrBuff |= LORA_NORX;
+					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_RESET);
+					break;
+				case 0xFFFE:
+					ErrBuff |= LORA_FAULT;
+					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_RESET);
+					break;
+				case 0x5555:
+					ErrBuff &= ~LORA_FAULT;
+					ErrBuff &= ~LORA_NORX;
+					odcinaczFlag = 1;
+					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
+					xQueueSend(qToWifiHandle, &odcinaczFlag, 0);
+					break;
+				case 0x0002:
+					ErrBuff &= ~LORA_FAULT;
+					ErrBuff &= ~LORA_NORX;
+					//zapal diode
+					HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_SET);
+					break;
+				case 0x0001:
+					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
+					ErrBuff &= ~LORA_FAULT;
+					ErrBuff &= ~LORA_NORX;
+					break;
+				default:
+					break;
+			}
 		}
+
 		//--------------------WifiReception-------------------------------------------
-		xQueueReceive(qFromWifiErrHandle, &wifiStatus, 0);
-		if (wifiStatus)
+		if (xQueueReceive(qFromWifiErrHandle, &wifiStatus, 0) == pdTRUE)
 		{
-			ErrBuff |= WIFI_ERR;
+			if (wifiStatus)
+			{
+				ErrBuff |= WIFI_ERR;
+			}
+			else
+			{
+				ErrBuff &= ~WIFI_ERR;
+			}
 		}
 		// ------------------ some things -------------------------------------------
 		CycleNb++;
