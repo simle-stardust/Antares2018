@@ -68,6 +68,7 @@
 #define L3GD20HAddr     (0b1101011 << 1)	//gyro
 #define LSM303DAddr  	(0b0011101 << 1)	//acc and magn
 #define LPS331APAddr  	(0b1011101 << 1)	//baro
+#define LEDDRIVERAddr   (0b0100000 << 1)
 
 #define ARRAY_LEN(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -1045,7 +1046,7 @@ static int16_t ReadDS18B20(uint64_t ROM)
 	iTemperatura += memory[0];
 	iTemperatura = (iTemperatura * 100) / 16;
 	if (CalculatedCRC != memory[8])
-		iTemperatura = 40400;
+		iTemperatura = 4040;
 	return iTemperatura;
 }
 
@@ -1131,6 +1132,7 @@ static uint16_t ReadI2CSensors(uint8_t* buf)
 	{
 		returnCode |= I2C_PRESSURE_ERR;
 	}
+
 	return returnCode;
 }
 
@@ -1179,8 +1181,12 @@ static gps_data_t GpsCheckAndProcess()
 
 static gps_data_t GpsParse(const char* data)
 {
-	static gps_data_t returnVal;
-	gps_data_t returnBuf;
+	static gps_data_t returnVal =
+	{ 0, 0, 0,
+	{ '0', '0', '0', '0', '0', '0', '.', '0', '0', '\0' }, 0x01, 'N', 'E' };
+	gps_data_t returnBuf =
+	{ 0, 0, 0,
+	{ '0', '0', '0', '0', '0', '0', '.', '0', '0', '\0' }, 0x01, 'N', 'E' };;
 	char* ptr;
 	uint8_t GPSReadChecksum = 0;
 	uint8_t GPSCalcChecksum = 1;
@@ -1260,13 +1266,20 @@ void StartCommandTask(void const * argument)
 	ds18b20_t tempbuf;
 	uint8_t wifiStatus = 0;
 	uint32_t CycleNb = 0;
+	HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
+
+	HAL_GPIO_WritePin(D0_GPIO_Port, D0_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(D4_GPIO_Port, D4_Pin, GPIO_PIN_SET);
+
 	f_mount(&my_fatfs, SD_Path, 1);
 	WriteToSD((uint8_t*) initMessage, sizeof(initMessage));
 	memset(SDBuffer, 0, sizeof(SDBuffer));
 	/* Infinite loop */
 	for (;;)
 	{
-		ErrBuff = 0;
 		tick = osKernelSysTick();
 		// --------------- I2C Sensors Readout -------------------------------
 		ErrBuff |= ReadI2CSensors(RawDataBuffer);
@@ -1287,10 +1300,10 @@ void StartCommandTask(void const * argument)
 				tempbuf.t1, tempbuf.t2, tempbuf.t3, tempbuf.t4, tempbuf.t5,
 				tempbuf.t6, tempbuf.t7);
 		ErrBuff |= WriteToSD(SDBuffer, SDBufLen);
-		if ((tempbuf.t1 == 40400) || (tempbuf.t2 == 40400)
-				|| (tempbuf.t3 == 40400) || (tempbuf.t4 == 40400)
-				|| (tempbuf.t5 == 40400) || (tempbuf.t6 == 40400)
-				|| (tempbuf.t7 == 40400))
+		if ((tempbuf.t1 == 4040) || (tempbuf.t2 == 4040)
+				|| (tempbuf.t3 == 4040) || (tempbuf.t4 == 4040)
+				|| (tempbuf.t5 == 4040) || (tempbuf.t6 == 4040)
+				|| (tempbuf.t7 == 4040))
 		{
 			ErrBuff |= DS18_ERR;
 		}
@@ -1327,7 +1340,7 @@ void StartCommandTask(void const * argument)
 		DataToSend.lat = gpsData.lat;
 		DataToSend.status = ErrBuff;
 		DataToSend.statusKom = 0x0000;
-		if (CycleNb % 30 == 0)
+		if (CycleNb % 10 == 0)
 		{
 			xQueueSend(qToLoraHandle, &DataToSend, 2);
 		}
@@ -1337,30 +1350,30 @@ void StartCommandTask(void const * argument)
 			switch (LoraDnMsg)
 			{
 				case 0xFFFF:
-					ErrBuff |= LORA_NORX;
-					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_RESET);
+					ErrBuff |= LORA_ERR;
+					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
+					HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_SET);
 					break;
 				case 0xFFFE:
-					ErrBuff |= LORA_FAULT;
-					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_RESET);
+					ErrBuff |= LORA_ERR;
+					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
+					HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_SET);
 					break;
 				case 0x5555:
-					ErrBuff &= ~LORA_FAULT;
-					ErrBuff &= ~LORA_NORX;
+					ErrBuff &= ~LORA_ERR;
+					ErrBuff |= ODCINACZ_FLAG;
 					odcinaczFlag = 1;
-					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
+					HAL_GPIO_WritePin(D4_GPIO_Port, D4_Pin, GPIO_PIN_RESET);
 					xQueueSend(qToWifiHandle, &odcinaczFlag, 0);
 					break;
 				case 0x0002:
-					ErrBuff &= ~LORA_FAULT;
-					ErrBuff &= ~LORA_NORX;
+					ErrBuff &= ~LORA_ERR;
 					//zapal diode
-					HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_SET);
+					HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_RESET);
 					break;
 				case 0x0001:
-					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
-					ErrBuff &= ~LORA_FAULT;
-					ErrBuff &= ~LORA_NORX;
+					HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_RESET);
+					ErrBuff &= ~LORA_ERR;
 					break;
 				default:
 					break;
@@ -1395,16 +1408,25 @@ void StartCommandTask(void const * argument)
 		if (ErrBuff & SD_ERR)
 		{
 			dataToWatchdog = 1;
-			HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_SET);
 		}
 		else
 		{
 			dataToWatchdog = 0;
-			HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_RESET);
 		}
 		xQueueSend(qToWatchdogHandle, &dataToWatchdog, 10);
 		wifiData.status = ErrBuff;
 		xQueueSend(qToWifiSetValHandle, &wifiData, 10);
+
+
+		ErrBuff ^= RUNNING_FLAG;
+
+		memset(RawDataBuffer, 0, sizeof(RawDataBuffer));
+		RawDataBuffer[0] = (uint8_t)(~ErrBuff >> 8);
+		RawDataBuffer[1] = (uint8_t)(~ErrBuff & 0xFF);
+		HAL_I2C_Master_Transmit(&hi2c2, LEDDRIVERAddr, (uint8_t*) RawDataBuffer, 2, 100);
+
 		HAL_GPIO_TogglePin(D0_GPIO_Port, D0_Pin);
 		osDelayUntil(&tick, 1000);
 	}
@@ -1457,7 +1479,9 @@ void StartLoraTask(void const * argument)
 			Payload[21] = (DataToSend.statusKom >> 8);
 			Payload[22] = (DataToSend.statusKom & 0xFF);
 			LoraStatus = LoraWANTransmitByte(Payload, 23);
+			HAL_GPIO_WritePin(D4_GPIO_Port, D4_Pin, GPIO_PIN_RESET);
 			ReceivedNbOfBytes = LoraReceive();
+			HAL_GPIO_WritePin(D4_GPIO_Port, D4_Pin, GPIO_PIN_SET);
 			if (ReceivedNbOfBytes)
 			{
 				readLoraRegister(0x10, &FifoCurrRxAddr);
@@ -1489,7 +1513,7 @@ void StartLoraTask(void const * argument)
 			}
 			xQueueSend(qFromLoraHandle, &ReceivedFrame, 5);
 		}
-		osDelayUntil(&tick, 30000);
+		osDelayUntil(&tick, 10000);
 	}
   /* USER CODE END StartLoraTask */
 }
@@ -1531,9 +1555,9 @@ void StartWIFITask(void const * argument)
 						setData.alt, setData.status);
 		HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, TxBufLen, 100);
 		osDelay(300);
-		strcpy(TxBuffer, GetCommand);
-		HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, sizeof(GetCommand),
-				100);
+		//strcpy(TxBuffer, GetCommand);
+		//HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, sizeof(GetCommand),
+				//100);
 		//HAL_UART_Receive_IT(&huart4, (uint8_t*) RxBuffer, sizeof(RxBuffer));
 		osDelay(200);
 		if (WifiRxFlag & (strstr(RxBuffer, Ok) != NULL))
@@ -1593,6 +1617,7 @@ void StartWatchdogTask(void const * argument)
 	for (;;)
 	{
 		xQueueReceive(qToWatchdogHandle, &message, 10);
+		IWDG->KR = 0xAAAA;
 		if (message != 0)
 		{
 			osDelay(10000);
