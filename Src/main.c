@@ -227,7 +227,7 @@ static gps_data_t GpsParse(const char* data);
 
 
 // WiFi restore
-/*void USART1_IRQHandler()
+void USART1_IRQHandler()
 {
 	if ((USART1->SR & USART_SR_IDLE) && (USART1->CR1 & USART_CR1_IDLEIE))
 	{
@@ -254,37 +254,9 @@ void DMA1_Channel5_IRQHandler()
 		DMA1->IFCR |= DMA_IFCR_CHTIF5;
 		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
 	}
-}*/
-void UART4_IRQHandler()
-{
-	if ((UART4->SR & USART_SR_IDLE) && (UART4->CR1 & USART_CR1_IDLEIE))
-	{
-		// clear by reading dr
-		volatile uint32_t tmpreg;
-		tmpreg = UART4->SR;
-		(void) tmpreg;
-		tmpreg = UART4->DR;
-		(void) tmpreg;
-		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
-	}
 }
 
-void DMA2_Channel3_IRQHandler()
-{
-	//clear interrupt flag
-	if (((DMA2->ISR) & (DMA_ISR_TCIF3)))
-	{
-		DMA2->IFCR |= DMA_IFCR_CTCIF3;
-		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
-	}
-	if (((DMA2->ISR) & (DMA_ISR_HTIF3)))
-	{
-		DMA2->IFCR |= DMA_IFCR_CHTIF3;
-		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
-	}
-}
-
-/* WIFI restore
+// WIFI restore
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	if (huart->Instance == UART4)
@@ -292,7 +264,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 		WifiRxFlag = 1;
 	}
 }
-*/
+
 
 
 /* USER CODE END PFP */
@@ -331,7 +303,7 @@ int main(void)
   MX_TIM7_Init();
   MX_ADC_Init();
   //WiFi restore
-  //MX_UART4_Init();
+  MX_UART4_Init();
 
   /* USER CODE BEGIN 2 */
 
@@ -741,7 +713,6 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 static void UART_Init()
 {
-	/*
 	RCC->APB2ENR |= RCC_APB2ENR_USART1EN;	//clock enable for UART1
 	RCC->AHBENR |= RCC_AHBENR_DMA1EN;
 	//alternate functions of PA9 and PA10 set to UART1 AF=7
@@ -764,11 +735,10 @@ static void UART_Init()
 
 	USART1->CR3 |= USART_CR3_DMAR;
 	USART1->CR1 = USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
+
 	//USART1->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_IDLEIE;
 	//USART2->CR1 |= USART_CR1_UE | USART_CR1_RE;
-	 *
-	 */ //WiFi restore
-
+/*
 	RCC->APB1ENR |= RCC_APB1ENR_UART4EN;	//clock enable for UART1
 	RCC->AHBENR |= RCC_AHBENR_DMA2EN;
 	//alternate functions of PC10 and PC11 set to UART4 AF=7
@@ -790,7 +760,7 @@ static void UART_Init()
 
 	UART4->CR3 |= USART_CR3_DMAR;
 	UART4->CR1 = USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
-
+*/
 }
 
 static inline uint8_t setBit(uint8_t value, uint8_t bit)
@@ -1632,12 +1602,11 @@ void StartWIFITask(void const * argument)
 						setData.ds18[4], setData.ds18[5], setData.ds18[6],
 						setData.hum, setData.press, setData.lat, setData.lon,
 						setData.alt, setData.status);
-		// WiFi restore
-		//HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, TxBufLen, 100);
+		HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, TxBufLen, 100);
 		osDelay(300);
-		//strcpy(TxBuffer, GetCommand);
-		//HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, sizeof(GetCommand),
-				//100);
+		strcpy(TxBuffer, GetCommand);
+		HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, sizeof(GetCommand),
+				100);
 		//HAL_UART_Receive_IT(&huart4, (uint8_t*) RxBuffer, sizeof(RxBuffer));
 		osDelay(200);
 		if (WifiRxFlag & (strstr(RxBuffer, Ok) != NULL))
@@ -1697,7 +1666,6 @@ void StartWatchdogTask(void const * argument)
 	for (;;)
 	{
 		xQueueReceive(qToWatchdogHandle, &message, 10);
-		IWDG->KR = 0xAAAA;
 		if (message != 0)
 		{
 			osDelay(10000);
