@@ -138,16 +138,16 @@ typedef struct wifi_get_t_
 	uint16_t statusKom;
 } wifi_get_t;
 
-#define DEV_ADDR                              (uint32_t)0x260113C5
+#define FREQUENCY  868100000lu // in Mhz! (868.1)
+
+#define DEV_ADDR                              (uint32_t)0x260112BA
 // network session key
 static const uint8_t NwkSKey[16] =
-{ 0xB8, 0x7E, 0x16, 0x94, 0x08, 0x6E, 0x6C, 0xA0, 0x39, 0xD8, 0xE8, 0x39, 0x27,
-		0x8B, 0x6E, 0x10 };
+{ 0x47, 0xB8, 0xCE, 0xE5, 0xA2, 0x82, 0xBC, 0xB4, 0x73, 0xA0, 0xC1, 0xEF, 0x5C, 0xF3, 0x01, 0x6A };
 
 // application session key
 static const uint8_t ArtSKey[16] =
-{ 0xE9, 0x74, 0xF8, 0xBC, 0xD7, 0x07, 0x47, 0x3F, 0x05, 0xE2, 0x59, 0x09, 0x77,
-		0x5F, 0xEF, 0xED };
+{ 0x4F, 0xE9, 0xA8, 0x61, 0x02, 0x33, 0xA6, 0xA4, 0x7C, 0x87, 0x0D, 0xC4, 0x9C, 0x10, 0x37, 0xF1 };
 
 /* USER CODE END Includes */
 
@@ -192,9 +192,9 @@ uint8_t GpsRxBuf[GPS_RXBUF_SIZE];
 
 volatile uint8_t WifiRxFlag = 0;
 static const uint64_t DSAddr[7] =
-{ 0x28997F8D0A000015, 0x28197C8D0A0000B1, 0x28F44E8D0A0000D5,
-		0x28545C8D0A000076, 0x28545C8D0A000076, 0x28545C8D0A000076,
-		0x28545C8D0A000076 };
+{ 0x2811C4ED09000015, 0x28155BFD09000029, 0x28622CEE090000B8,
+		0x287B8C870A0000A1, 0x2867F7870A00009A, 0x2839149D090000F4,
+		0x2839149D090000F4 };
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -225,42 +225,76 @@ static uint8_t LoraReceive();
 static uint8_t LoraTransmitByte(uint8_t *data, uint8_t size);
 static gps_data_t GpsParse(const char* data);
 
-void USART2_IRQHandler()
+
+// WiFi restore
+/*void USART1_IRQHandler()
 {
-	if ((USART2->SR & USART_SR_IDLE) && (USART2->CR1 & USART_CR1_IDLEIE))
+	if ((USART1->SR & USART_SR_IDLE) && (USART1->CR1 & USART_CR1_IDLEIE))
 	{
 		// clear by reading dr
 		volatile uint32_t tmpreg;
-		tmpreg = USART2->SR;
+		tmpreg = USART1->SR;
 		(void) tmpreg;
-		tmpreg = USART2->DR;
+		tmpreg = USART1->DR;
 		(void) tmpreg;
 		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
 	}
 }
 
-void DMA1_Channel6_IRQHandler()
+void DMA1_Channel5_IRQHandler()
 {
 	//clear interrupt flag
-	if (((DMA1->ISR) & (DMA_ISR_TCIF6)))
+	if (((DMA1->ISR) & (DMA_ISR_TCIF5)))
 	{
-		DMA1->IFCR |= DMA_IFCR_CTCIF6;
+		DMA1->IFCR |= DMA_IFCR_CTCIF5;
 		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
 	}
-	if (((DMA1->ISR) & (DMA_ISR_HTIF6)))
+	if (((DMA1->ISR) & (DMA_ISR_HTIF5)))
 	{
-		DMA1->IFCR |= DMA_IFCR_CHTIF6;
+		DMA1->IFCR |= DMA_IFCR_CHTIF5;
+		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
+	}
+}*/
+void UART4_IRQHandler()
+{
+	if ((UART4->SR & USART_SR_IDLE) && (UART4->CR1 & USART_CR1_IDLEIE))
+	{
+		// clear by reading dr
+		volatile uint32_t tmpreg;
+		tmpreg = UART4->SR;
+		(void) tmpreg;
+		tmpreg = UART4->DR;
+		(void) tmpreg;
 		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
 	}
 }
 
+void DMA2_Channel3_IRQHandler()
+{
+	//clear interrupt flag
+	if (((DMA2->ISR) & (DMA_ISR_TCIF3)))
+	{
+		DMA2->IFCR |= DMA_IFCR_CTCIF3;
+		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
+	}
+	if (((DMA2->ISR) & (DMA_ISR_HTIF3)))
+	{
+		DMA2->IFCR |= DMA_IFCR_CHTIF3;
+		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
+	}
+}
+
+/* WIFI restore
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-	if (huart->Instance == USART1)
+	if (huart->Instance == UART4)
 	{
 		WifiRxFlag = 1;
 	}
 }
+*/
+
+
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
@@ -296,7 +330,8 @@ int main(void)
   MX_SDIO_SD_Init();
   MX_TIM7_Init();
   MX_ADC_Init();
-  MX_UART4_Init();
+  //WiFi restore
+  //MX_UART4_Init();
 
   /* USER CODE BEGIN 2 */
 
@@ -706,32 +741,56 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 static void UART_Init()
 {
-	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;	//clock enable for UART1
+	/*
+	RCC->APB2ENR |= RCC_APB2ENR_USART1EN;	//clock enable for UART1
 	RCC->AHBENR |= RCC_AHBENR_DMA1EN;
 	//alternate functions of PA9 and PA10 set to UART1 AF=7
-	GPIOA->AFR[0] |= (0x00000700 & GPIO_AFRL_AFSEL2);
-	GPIOA->AFR[0] |= (0x00007000 & GPIO_AFRL_AFSEL3);
-	GPIOA->MODER |= (0x000000F0 & 0x000000A0);
-	GPIOA->OSPEEDR |= (0x000000F0 & 0x000000A0);			//high speed
-	//GPIOA->PUPDR |= (0x000000F0 & 0x00000050); //pullup
+	GPIOA->AFR[1] |= (0x00000770);
+	GPIOA->MODER |= (0x00280000);
+	GPIOA->OSPEEDR |= (0x003C0000);
 
-	NVIC_SetPriority(USART2_IRQn, 0x05);
-	NVIC_EnableIRQ(USART2_IRQn);			// set enable IRQ
+	NVIC_SetPriority(USART1_IRQn, 0x05);
+	NVIC_EnableIRQ(USART1_IRQn);			// set enable IRQ
 
-	NVIC_SetPriority(DMA1_Channel6_IRQn, 0x05);
-	NVIC_EnableIRQ(DMA1_Channel6_IRQn);
-	USART2->BRR = 3333;						//baud rate = 9600
+	NVIC_SetPriority(DMA1_Channel5_IRQn, 0x05);
+	NVIC_EnableIRQ(DMA1_Channel5_IRQn);
+	USART1->BRR = 3333;						//baud rate = 9600
 	// usart+transmitter+receiver enable
-	USART2->CR1 = USART_CR1_UE | USART_CR1_RE | USART_CR1_RXNEIE;
 
-	DMA1_Channel6->CMAR = (uint32_t) GpsRxBuf;
-	DMA1_Channel6->CPAR = (uint32_t) &(USART2->DR);
-	DMA1_Channel6->CNDTR = GPS_RXBUF_SIZE;
-	DMA1_Channel6->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_EN;
+	DMA1_Channel5->CMAR = (uint32_t) GpsRxBuf;
+	DMA1_Channel5->CPAR = (uint32_t) &(USART1->DR);
+	DMA1_Channel5->CNDTR = GPS_RXBUF_SIZE;
+	DMA1_Channel5->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_EN | DMA_CCR_HTIE | DMA_CCR_TCIE;
 
-	USART2->CR3 |= USART_CR3_DMAR;
-	USART2->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_IDLEIE;
+	USART1->CR3 |= USART_CR3_DMAR;
+	USART1->CR1 = USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
+	//USART1->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_IDLEIE;
 	//USART2->CR1 |= USART_CR1_UE | USART_CR1_RE;
+	 *
+	 */ //WiFi restore
+
+	RCC->APB1ENR |= RCC_APB1ENR_UART4EN;	//clock enable for UART1
+	RCC->AHBENR |= RCC_AHBENR_DMA2EN;
+	//alternate functions of PC10 and PC11 set to UART4 AF=7
+	GPIOC->AFR[1] |= (0x00008800);
+	GPIOC->MODER |= (0x00A00000);
+	GPIOC->OSPEEDR |= (0x00F00000);
+
+	NVIC_SetPriority(UART4_IRQn, 0x05);
+	NVIC_EnableIRQ(UART4_IRQn);			// set enable IRQ
+
+	NVIC_SetPriority(DMA2_Channel3_IRQn, 0x05);
+	NVIC_EnableIRQ(DMA2_Channel3_IRQn);
+	UART4->BRR = 3333;						//baud rate = 9600
+
+	DMA2_Channel3->CMAR = (uint32_t) GpsRxBuf;
+	DMA2_Channel3->CPAR = (uint32_t) &(UART4->DR);
+	DMA2_Channel3->CNDTR = GPS_RXBUF_SIZE;
+	DMA2_Channel3->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_EN | DMA_CCR_HTIE | DMA_CCR_TCIE;
+
+	UART4->CR3 |= USART_CR3_DMAR;
+	UART4->CR1 = USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
+
 }
 
 static inline uint8_t setBit(uint8_t value, uint8_t bit)
@@ -781,22 +840,42 @@ static uint8_t readLoraRegister(uint8_t address, uint8_t* data)
 
 static void Lora_Init()
 {
+	uint64_t frf = ((uint64_t) FREQUENCY << 19) / 32000000;
+
 	HAL_GPIO_WritePin(LoRa_RST_GPIO_Port, LoRa_RST_Pin, GPIO_PIN_SET);
-	osDelay(100);
+	HAL_Delay(100);
 	HAL_GPIO_WritePin(LoRa_RST_GPIO_Port, LoRa_RST_Pin, GPIO_PIN_RESET);
-	osDelay(10);
+	HAL_Delay(10);
+
+	//Opmode - sleep -> lora -> standby
 	writeLoraRegister(0x01, 0x00);
 	writeLoraRegister(0x01, 0x80);
 	writeLoraRegister(0x01, 0x81);
+
+	// Max Payload length = 255
 	writeLoraRegister(0x23, 255);
+
+	// LNA gain = maximum, LNA boot = yes
 	writeLoraRegister(0x0C, 0x23);
-	writeLoraRegister(0x1F, 0x8F);
+
+	// Bandwidth = 125kHz, CR 4/5, Explicit Header Mode, CRC enable, Low Data Rate Optimization on
 	writeLoraRegister(0x1D, 0x0B);
-	writeLoraRegister(0x1E, 0xC4);
-	writeLoraRegister(0x06, 0xD9);
-	writeLoraRegister(0x07, 0x06);
-	writeLoraRegister(0x08, 0x98);
-	writeLoraRegister(0x09, 0x0F);
+
+	// Spreading Factor 12, LNA gain set by the internal AGC loop, RX timeout MSB = 0b11
+	writeLoraRegister(0x1E, 0xC4);   //bylo C5
+	// RX timeout LSB = 0xFF
+	writeLoraRegister(0x1F, 0x8F);   //bylo A0
+
+	// Sync Word = 0x34 (LoRaWAN sync word)
+	writeLoraRegister(0x39, 0x34);
+
+	//868.1 MHz - LoRaWAN channel 1
+	writeLoraRegister(0x06, (uint8_t) (frf >> 16));
+	writeLoraRegister(0x07, (uint8_t) (frf >> 8));
+	writeLoraRegister(0x08, (uint8_t) (frf >> 0));
+
+	// max output power, no PA_BOOST
+	writeLoraRegister(0x09, 0x8F);
 }
 
 static uint8_t LoraReceive()
@@ -994,15 +1073,15 @@ static uint16_t oneWireReadByte(void)
 static void DS18B20ConvertTemperature()
 {
 	__disable_irq();
-	HAL_GPIO_WritePin(OneWire_PULLUP_GPIO_Port, OneWire_PULLUP_Pin,
-			GPIO_PIN_SET);
+	//HAL_GPIO_WritePin(OneWire_PULLUP_GPIO_Port, OneWire_PULLUP_Pin,
+	//		GPIO_PIN_RESET);
 	oneWireResetPulse();
 	oneWireSendByte(0xCC);
 	oneWireSendByte(0x44);
 	__enable_irq();
 	osDelay(750);
-	HAL_GPIO_WritePin(OneWire_PULLUP_GPIO_Port, OneWire_PULLUP_Pin,
-			GPIO_PIN_RESET);
+	//HAL_GPIO_WritePin(OneWire_PULLUP_GPIO_Port, OneWire_PULLUP_Pin,
+	//		GPIO_PIN_SET);
 }
 
 static int16_t ReadDS18B20(uint64_t ROM)
@@ -1143,7 +1222,7 @@ static gps_data_t GpsCheckAndProcess()
 	size_t pos;
 	gps_data_t ret;
 	/* Calculate current position in buffer */
-	pos = ARRAY_LEN(GpsRxBuf) - DMA1_Channel6->CNDTR;
+	pos = ARRAY_LEN(GpsRxBuf) - DMA1_Channel5->CNDTR;
 	if (pos != old_pos)
 	{ /* Check change in received data */
 		if (pos > old_pos)
@@ -1553,7 +1632,8 @@ void StartWIFITask(void const * argument)
 						setData.ds18[4], setData.ds18[5], setData.ds18[6],
 						setData.hum, setData.press, setData.lat, setData.lon,
 						setData.alt, setData.status);
-		HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, TxBufLen, 100);
+		// WiFi restore
+		//HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, TxBufLen, 100);
 		osDelay(300);
 		//strcpy(TxBuffer, GetCommand);
 		//HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, sizeof(GetCommand),
@@ -1638,6 +1718,8 @@ void StartDS18Task(void const * argument)
 	ds18b20_t DS18B20Temp;
 	uint32_t BeginTick = 0;
 	/* Infinite loop */
+	HAL_GPIO_WritePin(OneWire_PULLUP_GPIO_Port, OneWire_PULLUP_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(Thermal_Signal_Internal_GPIO_Port, Thermal_Signal_Internal_Pin, GPIO_PIN_RESET);
 	for (;;)
 	{
 		BeginTick = osKernelSysTick();
