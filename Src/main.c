@@ -1243,7 +1243,7 @@ static gps_data_t GpsParse(const char* data)
 	ptr = strstr(data, "$GPGGA");
 	if (ptr == NULL)
 	{
-		returnVal.status = 0x01;
+		returnVal.status = 0x02;
 		return returnVal;
 	}
 	GPSCalcChecksum = ptr[1];
@@ -1329,6 +1329,8 @@ void StartCommandTask(void const * argument)
 	/* Infinite loop */
 	for (;;)
 	{
+		// flags to clear with each iteration
+		ErrBuff &= ~(WIFI_ERR | GPS_ERR | DS18_ERR);
 		tick = osKernelSysTick();
 		// --------------- I2C Sensors Readout -------------------------------
 		ErrBuff |= ReadI2CSensors(RawDataBuffer);
@@ -1366,12 +1368,19 @@ void StartCommandTask(void const * argument)
 		memset(SDBuffer, 0, sizeof(SDBuffer));
 		SDBufLen = 0;
 		// ---------------- GPS Readout ----------------------------------------
-		while (xQueueReceive(qFromGPSHandle, &gpsData, 5))
-			;
-		if (gpsData.status != 0)
+
+		if (xQueueReceive(qFromGPSHandle, &gpsData, 5) == pdTRUE)
 		{
+			// received GPS data
+			gpsData.status = 0x00;
+		}
+		else
+		{
+			gpsData.status = 0x01;
 			ErrBuff |= GPS_ERR;
 		}
+		xQueueReset(qFromGPSHandle);
+
 		wifiData.alt = gpsData.altitude;
 		wifiData.lat = gpsData.lat;
 		wifiData.lon = gpsData.lon;
@@ -1443,7 +1452,7 @@ void StartCommandTask(void const * argument)
 		}
 		// ------------------ some things -------------------------------------------
 		CycleNb++;
-		for (int i = 0; i < 16; i++)
+		for (int i = 0; i < 15; i++)
 		{
 			if ((ErrBuff & (1 << i)) != 0)
 			{
@@ -1716,8 +1725,11 @@ void StartGpsParserTask(void const * argument)
 	{
 		xSemaphoreTake(GpsBinarySemHandle, portMAX_DELAY);
 		gps = GpsCheckAndProcess();
-		xQueueSend(qFromGPSHandle, &gps, 0);
-		osDelay(100);
+		if (gps.status == 0x00)
+		{
+			xQueueSend(qFromGPSHandle, &gps, 0);
+		}
+		osDelay(5);
 	}
   /* USER CODE END StartGpsParserTask */
 }
