@@ -1310,12 +1310,13 @@ void StartCommandTask(void const * argument)
 	uint8_t SDBuffer[64];
 	uint8_t SDBufLen = 0;
 	uint8_t RawDataBuffer[20];
+	uint8_t PowerLEDFlagActivate = 0;
+	uint8_t DNFlag = 0;
 	loraUPframe_t DataToSend;
 	uint16_t ErrBuff = 0;
 	ds18b20_t tempbuf;
 	uint8_t wifiStatus = 0;
 	uint32_t CycleNb = 0;
-	HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
 
 	HAL_GPIO_WritePin(D0_GPIO_Port, D0_Pin, GPIO_PIN_SET);
 	HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_SET);
@@ -1405,6 +1406,7 @@ void StartCommandTask(void const * argument)
 		//----------------- LORA Reception -------------------------------------
 		if (xQueueReceive(qFromLoraHandle, &LoraDnMsg, 5) == pdTRUE)
 		{
+			DNFlag = 1;
 			switch (LoraDnMsg)
 			{
 				case 0xFFFF:
@@ -1427,6 +1429,7 @@ void StartCommandTask(void const * argument)
 				case 0x0002:
 					ErrBuff &= ~LORA_ERR;
 					//zapal diode
+					PowerLEDFlagActivate = 1;
 					HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_RESET);
 					break;
 				case 0x0001:
@@ -1451,7 +1454,16 @@ void StartCommandTask(void const * argument)
 			}
 		}
 		// ------------------ some things -------------------------------------------
+
+		if (DNFlag)
+		{
+			DNFlag = 0;
+			SDBufLen = sprintf((char*) SDBuffer, "Received Downlink: %04x, ", LoraDnMsg);
+			WriteToSD(SDBuffer, SDBufLen);
+		}
+
 		CycleNb++;
+
 		for (int i = 0; i < 15; i++)
 		{
 			if ((ErrBuff & (1 << i)) != 0)
@@ -1465,12 +1477,20 @@ void StartCommandTask(void const * argument)
 		WriteToSD((uint8_t *) "\r\n", 2);
 		if (ErrBuff & SD_ERR)
 		{
-			dataToWatchdog = 1;
+			dataToWatchdog = 0xFF;
 			HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_SET);
 		}
 		else
 		{
-			dataToWatchdog = 0;
+			if (PowerLEDFlagActivate)
+			{
+				PowerLEDFlagActivate = 0;
+				dataToWatchdog = 1;
+			}
+			else
+			{
+				dataToWatchdog = 0;
+			}
 			HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_RESET);
 		}
 		xQueueSend(qToWatchdogHandle, &dataToWatchdog, 10);
@@ -1663,7 +1683,13 @@ void StartWIFITask(void const * argument)
 void StartWatchdogTask(void const * argument)
 {
   /* USER CODE BEGIN StartWatchdogTask */
+	uint32_t tick = 0;
 	uint8_t message = 0;
+	uint8_t PowerLEDFlagActive = 0;
+	uint8_t powerLEDstate = 0;
+
+	HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
+
 	RCC->CSR |= (1 << 0);                  // LSI enable, necessary for IWDG
 	while ((RCC->CSR & (1 << 1)) == 0)
 		;         // wait till LSI is ready
@@ -1674,16 +1700,55 @@ void StartWatchdogTask(void const * argument)
 	/* Infinite loop */
 	for (;;)
 	{
+		tick = osKernelSysTick();
 		xQueueReceive(qToWatchdogHandle, &message, 10);
-		if (message != 0)
+		if (message == 0xFF)
 		{
 			osDelay(10000);
 		}
 		else
 		{
+			if (message == 1)
+			{
+				message = 0;
+				PowerLEDFlagActive = ~PowerLEDFlagActive;
+				powerLEDstate = 0;
+				HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
+			}
 			IWDG->KR = 0xAAAA;
 		}
-		osDelay(1000);
+
+		if (PowerLEDFlagActive)
+		{
+			switch (powerLEDstate)
+			{
+			case 0:
+				HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_RESET);
+				powerLEDstate++;
+				break;
+			case 1:
+				HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
+				//allow to fall through
+			case 2:
+			case 3:
+			case 4:
+			case 5:
+			case 6:
+			case 7:
+			case 8:
+			case 9:
+				powerLEDstate++;
+				break;
+			case 10:
+				powerLEDstate = 0;
+				break;
+			default:
+				powerLEDstate = 0;
+				break;
+			}
+		}
+
+		osDelayUntil(&tick, 100);
 	}
   /* USER CODE END StartWatchdogTask */
 }
