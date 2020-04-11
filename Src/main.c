@@ -708,9 +708,41 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(OneWire_GPIO_Port, &GPIO_InitStruct);
 
+  HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
 }
 
 /* USER CODE BEGIN 4 */
+uint16_t ReadADC(uint8_t adcnum)
+{
+	ADC_ChannelConfTypeDef adc_ch;
+
+	switch (adcnum)
+	{
+	case 0:
+		//ADC ele
+		adc_ch.Channel = ADC_CHANNEL_19;
+		break;
+	case 1:
+		//ADC lora
+		adc_ch.Channel = ADC_CHANNEL_2;
+		break;
+	case 2:
+		//ADC thermal
+		adc_ch.Channel = ADC_CHANNEL_1;
+		break;
+	default:
+		adc_ch.Channel = ADC_CHANNEL_19;
+		break;
+	}
+
+	adc_ch.Rank = ADC_REGULAR_RANK_1;
+	adc_ch.SamplingTime = ADC_SAMPLETIME_24CYCLES;
+	HAL_ADC_ConfigChannel(&hadc, &adc_ch);
+	HAL_ADC_Start(&hadc);
+	HAL_ADC_PollForConversion(&hadc, 100);
+	return HAL_ADC_GetValue(&hadc);
+}
+
 static void UART_Init()
 {
 	RCC->APB2ENR |= RCC_APB2ENR_USART1EN;	//clock enable for UART1
@@ -1112,12 +1144,15 @@ static uint16_t WriteToSD(uint8_t* buf, uint8_t len)
 	__disable_irq();
 	fresult = f_open(&my_file, my_file_name, FA_WRITE | FA_OPEN_ALWAYS);
 	fileSize = f_size(&my_file);
+	fresult = f_close(&my_file);
 	if (fileSize > 1000000)
 	{
 		datalogNum++;
 		sprintf(my_file_name, "datalog%d.txt", datalogNum);
+		// reset file object
+		memset(&my_file, 0x00, sizeof(my_file));
+		fileSize  = 0;
 	}
-	fresult = f_close(&my_file);
 	__enable_irq();
 	__disable_irq();
 	fresult = f_open(&my_file, my_file_name, FA_WRITE | FA_OPEN_ALWAYS);
@@ -1318,6 +1353,10 @@ void StartCommandTask(void const * argument)
 	uint8_t wifiStatus = 0;
 	uint32_t CycleNb = 0;
 
+	uint16_t ADC_ele = 0;
+	uint16_t ADC_lora = 0;
+	uint16_t ADC_thermal = 0;
+
 	HAL_GPIO_WritePin(D0_GPIO_Port, D0_Pin, GPIO_PIN_SET);
 	HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_SET);
 	HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
@@ -1331,7 +1370,7 @@ void StartCommandTask(void const * argument)
 	for (;;)
 	{
 		// flags to clear with each iteration
-		ErrBuff &= ~(WIFI_ERR | GPS_ERR | DS18_ERR);
+		ErrBuff &= ~(GPS_ERR | DS18_ERR);
 		tick = osKernelSysTick();
 		// --------------- I2C Sensors Readout -------------------------------
 		ErrBuff |= ReadI2CSensors(RawDataBuffer);
@@ -1346,6 +1385,18 @@ void StartCommandTask(void const * argument)
 		wifiData.hum = 0x0000;
 		memset(SDBuffer, 0, sizeof(SDBuffer));
 		SDBufLen = 0;
+
+		// read ADCs
+		ADC_ele = ReadADC(0);
+		ADC_lora = ReadADC(1);
+		ADC_thermal = ReadADC(2);
+
+		SDBufLen = sprintf((char*) SDBuffer, "%u,%u,%u,",
+				ADC_ele, ADC_lora, ADC_thermal);
+		ErrBuff |= WriteToSD(SDBuffer, SDBufLen);
+		memset(SDBuffer, 0, sizeof(SDBuffer));
+		SDBufLen = 0;
+
 		// --------------- DS18B20 Readout ------------------------------------
 		xQueueReceive(qFromDS18Handle, &tempbuf, 0);
 		SDBufLen += sprintf((char*) SDBuffer, "%d,%d,%d,%d,%d,%d,%d,",
@@ -1427,6 +1478,7 @@ void StartCommandTask(void const * argument)
 					xQueueSend(qToWifiHandle, &odcinaczFlag, 0);
 					break;
 				case 0x0002:
+				case 0x0003:
 					ErrBuff &= ~LORA_ERR;
 					//zapal diode
 					PowerLEDFlagActivate = 1;
@@ -1485,7 +1537,14 @@ void StartCommandTask(void const * argument)
 			if (PowerLEDFlagActivate)
 			{
 				PowerLEDFlagActivate = 0;
-				dataToWatchdog = 1;
+				if (LoraDnMsg == 0x0002)
+				{
+					dataToWatchdog = 1;
+				}
+				else
+				{
+					dataToWatchdog = 2;
+				}
 			}
 			else
 			{
@@ -1641,6 +1700,7 @@ void StartWIFITask(void const * argument)
 		if (WifiRxFlag & (strstr(RxBuffer, Ok) != NULL))
 		{
 			WifiRxFlag = 0;
+			/*
 			temps[0] = (int16_t) ((RxBuffer[10] << 8) + (RxBuffer[11] & 0xFF));
 			temps[1] = (int16_t) ((RxBuffer[13] << 8) + (RxBuffer[14] & 0xFF));
 			temps[2] = (int16_t) ((RxBuffer[16] << 8) + (RxBuffer[17] & 0xFF));
@@ -1655,6 +1715,7 @@ void StartWIFITask(void const * argument)
 			temps[11] = (int16_t) ((RxBuffer[43] << 8) + (RxBuffer[44] & 0xFF));
 			tempInfo.statusKom = (uint16_t) ((RxBuffer[46] << 8)
 					+ (RxBuffer[47] & 0xFF));
+					*/
 		}
 		else
 		{
@@ -1688,7 +1749,6 @@ void StartWatchdogTask(void const * argument)
 	uint8_t PowerLEDFlagActive = 0;
 	uint8_t powerLEDstate = 0;
 
-	HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
 
 	RCC->CSR |= (1 << 0);                  // LSI enable, necessary for IWDG
 	while ((RCC->CSR & (1 << 1)) == 0)
@@ -1711,9 +1771,22 @@ void StartWatchdogTask(void const * argument)
 			if (message == 1)
 			{
 				message = 0;
-				PowerLEDFlagActive = ~PowerLEDFlagActive;
-				powerLEDstate = 0;
-				HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
+				if (!PowerLEDFlagActive)
+				{
+					PowerLEDFlagActive = 1;
+					powerLEDstate = 0;
+					HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
+				}
+			}
+			else if (message == 2)
+			{
+				message = 0;
+				if (PowerLEDFlagActive)
+				{
+					PowerLEDFlagActive = 0;
+					powerLEDstate = 0;
+					HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
+				}
 			}
 			IWDG->KR = 0xAAAA;
 		}
