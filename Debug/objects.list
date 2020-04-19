@@ -1,4 +1,5 @@
 "startup/startup_stm32l151xd.o"
+"Src/DMA_CIRCULAR.o"
 "Src/aes.o"
 "Src/bsp_driver_sd.o"
 "Src/fatfs.o"

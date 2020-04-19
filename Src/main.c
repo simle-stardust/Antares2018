@@ -55,8 +55,16 @@
 #include "string.h"
 #include "stdlib.h"
 #include "aes.h"
+#include "DMA_CIRCULAR.h"
+
 
 #define GPS_RXBUF_SIZE    256
+
+#define DMA_RX_BUFFER_SIZE          128
+uint8_t DMA_RX_Buffer[DMA_RX_BUFFER_SIZE];
+
+#define UART_BUFFER_SIZE            512
+uint8_t UART_Buffer[UART_BUFFER_SIZE];
 
 #define PressureSensorAddr (0x28 << 1)
 #define DS3231Addr (0b1101000 << 1)
@@ -160,6 +168,8 @@ SPI_HandleTypeDef hspi1;
 TIM_HandleTypeDef htim7;
 
 UART_HandleTypeDef huart4;
+UART_HandleTypeDef huart1;
+DMA_HandleTypeDef hdma_usart1_rx;
 
 osThreadId CommandTaskHandle;
 osThreadId LoraTaskHandle;
@@ -197,12 +207,14 @@ static const uint64_t DSAddr[7] =
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_ADC_Init(void);
 static void MX_I2C2_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SDIO_SD_Init(void);
 static void MX_UART4_Init(void);
 static void MX_TIM7_Init(void);
+static void MX_USART1_UART_Init(void);
 void StartCommandTask(void const * argument);
 void StartLoraTask(void const * argument);
 void StartWIFITask(void const * argument);
@@ -224,6 +236,7 @@ static gps_data_t GpsParse(const char* data);
 
 
 // WiFi restore
+/*
 void USART1_IRQHandler()
 {
 	if ((USART1->SR & USART_SR_IDLE) && (USART1->CR1 & USART_CR1_IDLEIE))
@@ -252,6 +265,7 @@ void DMA1_Channel5_IRQHandler()
 		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
 	}
 }
+*/
 
 // WIFI restore
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
@@ -301,12 +315,14 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_ADC_Init();
   MX_I2C2_Init();
   MX_SPI1_Init();
   MX_SDIO_SD_Init();
   MX_UART4_Init();
   MX_TIM7_Init();
+  MX_USART1_UART_Init();
 
   /* USER CODE BEGIN 2 */
 
@@ -607,6 +623,40 @@ static void MX_UART4_Init(void)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
+
+}
+
+/* USART1 init function */
+static void MX_USART1_UART_Init(void)
+{
+
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 9600;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+}
+
+/** 
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void) 
+{
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
 
 }
 
@@ -1863,16 +1913,24 @@ void StartGpsParserTask(void const * argument)
 {
   /* USER CODE BEGIN StartGpsParserTask */
 	gps_data_t gps;
-	UART_Init();
+	//UART_Init();
 	/* Infinite loop */
+	__HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);   // enable idle line interrupt
+	__HAL_DMA_ENABLE_IT (&hdma_usart1_rx, DMA_IT_TC);  // enable DMA Tx cplt interrupt
+
+	HAL_UART_Receive_DMA (&huart1, DMA_RX_Buffer, DMA_RX_BUFFER_SIZE);
+
+	hdma_usart1_rx.Instance->CCR &= ~DMA_CCR_HTIE;  // disable uart half tx interrupt
 	for (;;)
 	{
+		/*
 		xSemaphoreTake(GpsBinarySemHandle, portMAX_DELAY);
 		gps = GpsCheckAndProcess();
 		if (gps.status == 0x00)
 		{
 			xQueueSend(qFromGPSHandle, &gps, 0);
 		}
+		*/
 		osDelay(5);
 	}
   /* USER CODE END StartGpsParserTask */

@@ -4,6 +4,7 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
+../Src/DMA_CIRCULAR.c \
 ../Src/aes.c \
 ../Src/bsp_driver_sd.c \
 ../Src/fatfs.c \
@@ -15,6 +16,7 @@ C_SRCS += \
 ../Src/system_stm32l1xx.c 
 
 OBJS += \
+./Src/DMA_CIRCULAR.o \
 ./Src/aes.o \
 ./Src/bsp_driver_sd.o \
 ./Src/fatfs.o \
@@ -26,6 +28,7 @@ OBJS += \
 ./Src/system_stm32l1xx.o 
 
 C_DEPS += \
+./Src/DMA_CIRCULAR.d \
 ./Src/aes.d \
 ./Src/bsp_driver_sd.d \
 ./Src/fatfs.d \
