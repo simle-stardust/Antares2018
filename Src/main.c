@@ -101,10 +101,6 @@ typedef struct ds18b20_t_
 	int16_t t1;
 	int16_t t2;
 	int16_t t3;
-	int16_t t4;
-	int16_t t5;
-	int16_t t6;
-	int16_t t7;
 } ds18b20_t;
 
 typedef struct gps_data_t_
@@ -123,7 +119,7 @@ typedef struct wifi_set_t_
 	uint8_t h;
 	uint8_t m;
 	uint8_t s;
-	int16_t ds18[7];
+	int16_t ds18[3];
 	uint16_t hum;
 	uint16_t press;
 	uint32_t lat;
@@ -377,7 +373,7 @@ int main(void)
   qToWifiHandle = osMessageCreate(osMessageQ(qToWifi), NULL);
 
   /* definition and creation of qFromWifi */
-  osMessageQDef(qFromWifi, 4, loraTempInfo_t);
+  osMessageQDef(qFromWifi, 1, loraTempInfo_t);
   qFromWifiHandle = osMessageCreate(osMessageQ(qFromWifi), NULL);
 
   /* definition and creation of qFromDS18 */
@@ -640,14 +636,14 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(LoRa_CS_GPIO_Port, LoRa_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, LoRa_RX_Pin|Thermal_Signal_Pin|Buzzer_Signal_Pin|Wifi_RST_Pin 
+  HAL_GPIO_WritePin(GPIOB, LoRa_RX_Pin|Thermal_Signal_Pin|Wifi_RST_Pin
                           |Wifi_GPIO0_Pin|Wifi_GPIO2_Pin|Wifi_GPIO4_Pin|Wifi_GPIO5_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(OneWire_GPIO_Port, OneWire_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
+  //HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : D0_Pin D1_Pin D2_Pin */
   GPIO_InitStruct.Pin = D0_Pin|D1_Pin|D2_Pin;
@@ -679,7 +675,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(Button_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LoRa_CS_Pin Buzzer_Pin */
-  GPIO_InitStruct.Pin = LoRa_CS_Pin|Buzzer_Pin;
+  GPIO_InitStruct.Pin = LoRa_CS_Pin;//|Buzzer_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -694,7 +690,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pins : LoRa_RX_Pin Thermal_Signal_Pin Buzzer_Signal_Pin Wifi_RST_Pin 
                            Wifi_GPIO0_Pin Wifi_GPIO2_Pin Wifi_GPIO4_Pin Wifi_GPIO5_Pin */
-  GPIO_InitStruct.Pin = LoRa_RX_Pin|Thermal_Signal_Pin|Buzzer_Signal_Pin|Wifi_RST_Pin 
+  GPIO_InitStruct.Pin = LoRa_RX_Pin|Thermal_Signal_Pin|Wifi_RST_Pin
                           |Wifi_GPIO0_Pin|Wifi_GPIO2_Pin|Wifi_GPIO4_Pin|Wifi_GPIO5_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -751,6 +747,7 @@ static void UART_Init()
 	GPIOA->AFR[1] |= (0x00000770);
 	GPIOA->MODER |= (0x00280000);
 	GPIOA->OSPEEDR |= (0x003C0000);
+	GPIOA->PUPDR |= (0x00140000);
 
 	NVIC_SetPriority(USART1_IRQn, 0x05);
 	NVIC_EnableIRQ(USART1_IRQn);			// set enable IRQ
@@ -768,8 +765,6 @@ static void UART_Init()
 	USART1->CR3 |= USART_CR3_DMAR;
 	USART1->CR1 = USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
 
-	//USART1->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_IDLEIE;
-	//USART2->CR1 |= USART_CR1_UE | USART_CR1_RE;
 /*
 	RCC->APB1ENR |= RCC_APB1ENR_UART4EN;	//clock enable for UART1
 	RCC->AHBENR |= RCC_AHBENR_DMA2EN;
@@ -1336,7 +1331,7 @@ void StartCommandTask(void const * argument)
 	{ '0', '0', '0', '0', '0', '0', '.', '0', '0', '\0' }, 0x01, 'N', 'E' };
 	wifi_set_t wifiData =
 	{ 0x00, 0x00, 0x00,
-	{ 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000 }, 0x00, 0x00,
+	{ 0x0000, 0x0000, 0x0000}, 0x00, 0x00,
 			0x00000000, 0x00000000, 0x00000000, 0x0000 };
 	uint8_t dataToWatchdog = 0;
 	uint8_t odcinaczFlag = 0;
@@ -1399,24 +1394,17 @@ void StartCommandTask(void const * argument)
 
 		// --------------- DS18B20 Readout ------------------------------------
 		xQueueReceive(qFromDS18Handle, &tempbuf, 0);
-		SDBufLen += sprintf((char*) SDBuffer, "%d,%d,%d,%d,%d,%d,%d,",
-				tempbuf.t1, tempbuf.t2, tempbuf.t3, tempbuf.t4, tempbuf.t5,
-				tempbuf.t6, tempbuf.t7);
+		SDBufLen += sprintf((char*) SDBuffer, "%d,%d,%d,",
+				tempbuf.t1, tempbuf.t2, tempbuf.t3);
 		ErrBuff |= WriteToSD(SDBuffer, SDBufLen);
 		if ((tempbuf.t1 == 4040) || (tempbuf.t2 == 4040)
-				|| (tempbuf.t3 == 4040) || (tempbuf.t4 == 4040)
-				|| (tempbuf.t5 == 4040) || (tempbuf.t6 == 4040)
-				|| (tempbuf.t7 == 4040))
+				|| (tempbuf.t3 == 4040))
 		{
 			ErrBuff |= DS18_ERR;
 		}
 		wifiData.ds18[0] = tempbuf.t1;
 		wifiData.ds18[1] = tempbuf.t2;
 		wifiData.ds18[2] = tempbuf.t3;
-		wifiData.ds18[3] = tempbuf.t4;
-		wifiData.ds18[4] = tempbuf.t5;
-		wifiData.ds18[5] = tempbuf.t6;
-		wifiData.ds18[6] = tempbuf.t7;
 		memset(SDBuffer, 0, sizeof(SDBuffer));
 		SDBufLen = 0;
 		// ---------------- GPS Readout ----------------------------------------
@@ -1450,7 +1438,7 @@ void StartCommandTask(void const * argument)
 		DataToSend.lat = gpsData.lat;
 		DataToSend.status = ErrBuff;
 		DataToSend.statusKom = 0x0000;
-		if (CycleNb % 10 == 0)
+		if (CycleNb % 60 == 0)
 		{
 			xQueueSend(qToLoraHandle, &DataToSend, 2);
 		}
@@ -1553,9 +1541,9 @@ void StartCommandTask(void const * argument)
 			HAL_GPIO_WritePin(D1_GPIO_Port, D1_Pin, GPIO_PIN_RESET);
 		}
 		xQueueSend(qToWatchdogHandle, &dataToWatchdog, 10);
+
 		wifiData.status = ErrBuff;
 		xQueueSend(qToWifiSetValHandle, &wifiData, 10);
-
 
 		ErrBuff ^= RUNNING_FLAG;
 
@@ -1650,7 +1638,7 @@ void StartLoraTask(void const * argument)
 			}
 			xQueueSend(qFromLoraHandle, &ReceivedFrame, 5);
 		}
-		osDelayUntil(&tick, 10000);
+		osDelayUntil(&tick, 60000);
 	}
   /* USER CODE END StartLoraTask */
 }
@@ -1661,65 +1649,60 @@ void StartWIFITask(void const * argument)
   /* USER CODE BEGIN StartWIFITask */
 	const char CutCommand[] = "@MarcinOdcinaj!";
 	const char GetCommand[] = "@MarcinGetValues!";
-	const char SetCommand[] = "@MarcinSetValues:";
 	const char Ok[] = "@MarcinOK:";
 	char TxBuffer[192];
-	char RxBuffer[49];
+	char RxBuffer[75];
 	uint8_t TxBufLen = 0;
-	int16_t temps[12];
+	int16_t temps[30];
 	uint8_t odcinaczFlag = 0;
 	uint8_t error = 0;
 	loraTempInfo_t tempInfo;
 	uint32_t tick;
 	wifi_set_t setData =
 	{ 0x00, 0x00, 0x00,
-	{ 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000 }, 0x00, 0x00,
+	{ 0x0000, 0x0000, 0x0000}, 0x00, 0x00,
 			0x00000000, 0x00000000, 0x00000000, 0x0000 };
 	memset(TxBuffer, 0, sizeof(TxBuffer));
 	memset(RxBuffer, 0, sizeof(RxBuffer));
+
+	__HAL_UART_ENABLE_IT(&huart4, UART_IT_RXNE);
+
+	// to do: control ESP - pull gpios/rst pin appropriately
+
 	/* Infinite loop */
 	for (;;)
 	{
 		tick = osKernelSysTick();
-		xQueueReceive(qToWifiSetValHandle, &setData, 200);
+		xQueueReceive(qToWifiSetValHandle, &setData, 1000);
 		TxBufLen =
 				sprintf((char*) TxBuffer,
-						"@MarcinSetValues:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lu,%lu,%ld,%d!\r\n",
+						"@MarcinSetValues:%u,%u,%u,%d,%d,%d,%u,%u,%lu,%lu,%ld,%u!\r\n",
 						setData.h, setData.m, setData.s, setData.ds18[0],
-						setData.ds18[1], setData.ds18[2], setData.ds18[3],
-						setData.ds18[4], setData.ds18[5], setData.ds18[6],
+						setData.ds18[1], setData.ds18[2],
 						setData.hum, setData.press, setData.lat, setData.lon,
 						setData.alt, setData.status);
-		HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, TxBufLen, 100);
-		osDelay(300);
+		HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, TxBufLen, 1000);
+		osDelay(1000);
 		strcpy(TxBuffer, GetCommand);
+		HAL_UART_Receive_IT(&huart4, (uint8_t*) RxBuffer, sizeof(RxBuffer));
 		HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, sizeof(GetCommand),
-				100);
-		//HAL_UART_Receive_IT(&huart4, (uint8_t*) RxBuffer, sizeof(RxBuffer));
-		osDelay(200);
+				1000);
+		osDelay(1000);
 		if (WifiRxFlag & (strstr(RxBuffer, Ok) != NULL))
 		{
 			WifiRxFlag = 0;
-			/*
-			temps[0] = (int16_t) ((RxBuffer[10] << 8) + (RxBuffer[11] & 0xFF));
-			temps[1] = (int16_t) ((RxBuffer[13] << 8) + (RxBuffer[14] & 0xFF));
-			temps[2] = (int16_t) ((RxBuffer[16] << 8) + (RxBuffer[17] & 0xFF));
-			temps[3] = (int16_t) ((RxBuffer[19] << 8) + (RxBuffer[20] & 0xFF));
-			temps[4] = (int16_t) ((RxBuffer[22] << 8) + (RxBuffer[23] & 0xFF));
-			temps[5] = (int16_t) ((RxBuffer[25] << 8) + (RxBuffer[26] & 0xFF));
-			temps[6] = (int16_t) ((RxBuffer[28] << 8) + (RxBuffer[29] & 0xFF));
-			temps[7] = (int16_t) ((RxBuffer[31] << 8) + (RxBuffer[32] & 0xFF));
-			temps[8] = (int16_t) ((RxBuffer[34] << 8) + (RxBuffer[35] & 0xFF));
-			temps[9] = (int16_t) ((RxBuffer[37] << 8) + (RxBuffer[38] & 0xFF));
-			temps[10] = (int16_t) ((RxBuffer[40] << 8) + (RxBuffer[41] & 0xFF));
-			temps[11] = (int16_t) ((RxBuffer[43] << 8) + (RxBuffer[44] & 0xFF));
-			tempInfo.statusKom = (uint16_t) ((RxBuffer[46] << 8)
-					+ (RxBuffer[47] & 0xFF));
-					*/
+			for (uint8_t i = 0; i < 30; i++)
+			{
+				temps[i] = (int16_t) (((uint16_t)RxBuffer[10 + (2 * i)] << 8) + (uint16_t)RxBuffer[11 + (2 * i)]);
+			}
+			tempInfo.statusKom = ((uint16_t)RxBuffer[70] << 8) + ((uint16_t)RxBuffer[71]);
+			// to do:
+			// calculate mean, and status bytes
 		}
 		else
 		{
 			error = 1;
+			// try to reset ESP?
 			tempInfo.mean = 0xFFFF;
 			tempInfo.highByte = 0xFF;
 			tempInfo.middleByte = 0xFF;
@@ -1842,10 +1825,6 @@ void StartDS18Task(void const * argument)
 		DS18B20Temp.t1 = ReadDS18B20(DSAddr[0]);
 		DS18B20Temp.t2 = ReadDS18B20(DSAddr[1]);
 		DS18B20Temp.t3 = ReadDS18B20(DSAddr[2]);
-		DS18B20Temp.t4 = ReadDS18B20(DSAddr[3]);
-		DS18B20Temp.t5 = ReadDS18B20(DSAddr[4]);
-		DS18B20Temp.t6 = ReadDS18B20(DSAddr[5]);
-		DS18B20Temp.t7 = ReadDS18B20(DSAddr[6]);
 		xQueueSend(qFromDS18Handle, &DS18B20Temp, 10);
 		osDelayUntil(&BeginTick, 1000);
 	}
