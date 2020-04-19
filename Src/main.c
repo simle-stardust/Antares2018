@@ -9,7 +9,7 @@
   * inserted by the user or by software development tools
   * are owned by their respective copyright owners.
   *
-  * Copyright (c) 2019 STMicroelectronics International N.V. 
+  * Copyright (c) 2020 STMicroelectronics International N.V. 
   * All rights reserved.
   *
   * Redistribution and use in source and binary forms, with or without 
@@ -187,6 +187,7 @@ UINT my_error;
 uint8_t GpsRxBuf[GPS_RXBUF_SIZE];
 
 volatile uint8_t WifiRxFlag = 0;
+volatile uint8_t WifiTxFlag = 0;
 static const uint64_t DSAddr[7] =
 { 0x2811C4ED09000015, 0x28155BFD09000029, 0x28622CEE090000B8,
 		0x287B8C870A0000A1, 0x2867F7870A00009A, 0x2839149D090000F4,
@@ -196,12 +197,12 @@ static const uint64_t DSAddr[7] =
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_ADC_Init(void);
 static void MX_I2C2_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SDIO_SD_Init(void);
-static void MX_TIM7_Init(void);
-static void MX_ADC_Init(void);
 static void MX_UART4_Init(void);
+static void MX_TIM7_Init(void);
 void StartCommandTask(void const * argument);
 void StartLoraTask(void const * argument);
 void StartWIFITask(void const * argument);
@@ -261,6 +262,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	}
 }
 
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if (huart->Instance == UART4)
+	{
+		WifiTxFlag = 1;
+	}
+}
 
 
 /* USER CODE END PFP */
@@ -293,13 +301,12 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_ADC_Init();
   MX_I2C2_Init();
   MX_SPI1_Init();
   MX_SDIO_SD_Init();
-  MX_TIM7_Init();
-  MX_ADC_Init();
-  //WiFi restore
   MX_UART4_Init();
+  MX_TIM7_Init();
 
   /* USER CODE BEGIN 2 */
 
@@ -493,7 +500,7 @@ static void MX_ADC_Init(void)
 
     /**Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time. 
     */
-  sConfig.Channel = ADC_CHANNEL_2;
+  sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_4CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
@@ -623,27 +630,27 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, D0_Pin|D1_Pin|D2_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOC, D0_Pin|D1_Pin|D2_Pin|Power_LED_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOH, D3_Pin|D4_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, Thermal_Signal_Internal_Pin|OneWire_PULLUP_Pin|LoRa_RST_Pin|LoRa_TX_Pin 
-                          |Thermal_Signal_Camera_Pin|Power_LED_Pin, GPIO_PIN_RESET);
+                          |Thermal_Signal_Camera_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LoRa_CS_GPIO_Port, LoRa_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, LoRa_RX_Pin|Thermal_Signal_Pin|Wifi_RST_Pin
+  HAL_GPIO_WritePin(GPIOB, LoRa_RX_Pin|Thermal_Signal_Pin|Buzzer_Signal_Pin|Wifi_RST_Pin 
                           |Wifi_GPIO0_Pin|Wifi_GPIO2_Pin|Wifi_GPIO4_Pin|Wifi_GPIO5_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(OneWire_GPIO_Port, OneWire_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  //HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : D0_Pin D1_Pin D2_Pin */
   GPIO_InitStruct.Pin = D0_Pin|D1_Pin|D2_Pin;
@@ -675,7 +682,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(Button_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LoRa_CS_Pin Buzzer_Pin */
-  GPIO_InitStruct.Pin = LoRa_CS_Pin;//|Buzzer_Pin;
+  GPIO_InitStruct.Pin = LoRa_CS_Pin|Buzzer_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -690,7 +697,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pins : LoRa_RX_Pin Thermal_Signal_Pin Buzzer_Signal_Pin Wifi_RST_Pin 
                            Wifi_GPIO0_Pin Wifi_GPIO2_Pin Wifi_GPIO4_Pin Wifi_GPIO5_Pin */
-  GPIO_InitStruct.Pin = LoRa_RX_Pin|Thermal_Signal_Pin|Wifi_RST_Pin
+  GPIO_InitStruct.Pin = LoRa_RX_Pin|Thermal_Signal_Pin|Buzzer_Signal_Pin|Wifi_RST_Pin 
                           |Wifi_GPIO0_Pin|Wifi_GPIO2_Pin|Wifi_GPIO4_Pin|Wifi_GPIO5_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -704,7 +711,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(OneWire_GPIO_Port, &GPIO_InitStruct);
 
-  HAL_GPIO_WritePin(Power_LED_GPIO_Port, Power_LED_Pin, GPIO_PIN_SET);
 }
 
 /* USER CODE BEGIN 4 */
@@ -1658,6 +1664,7 @@ void StartWIFITask(void const * argument)
 	uint8_t error = 0;
 	loraTempInfo_t tempInfo;
 	uint32_t tick;
+	int32_t meanCalc = 0;
 	wifi_set_t setData =
 	{ 0x00, 0x00, 0x00,
 	{ 0x0000, 0x0000, 0x0000}, 0x00, 0x00,
@@ -1681,14 +1688,21 @@ void StartWIFITask(void const * argument)
 						setData.ds18[1], setData.ds18[2],
 						setData.hum, setData.press, setData.lat, setData.lon,
 						setData.alt, setData.status);
-		HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, TxBufLen, 1000);
-		osDelay(1000);
+		HAL_UART_Transmit_IT(&huart4, (uint8_t*) TxBuffer, TxBufLen);
+		while (WifiTxFlag != 1)
+		{
+			osDelay(50);
+		}
+		WifiTxFlag = 0;
 		strcpy(TxBuffer, GetCommand);
 		HAL_UART_Receive_IT(&huart4, (uint8_t*) RxBuffer, sizeof(RxBuffer));
-		HAL_UART_Transmit(&huart4, (uint8_t*) TxBuffer, sizeof(GetCommand),
-				1000);
-		osDelay(1000);
-		if (WifiRxFlag & (strstr(RxBuffer, Ok) != NULL))
+		HAL_UART_Transmit_IT(&huart4, (uint8_t*) TxBuffer, sizeof(GetCommand));
+		while (WifiTxFlag != 1)
+		{
+			osDelay(50);
+		}
+		osDelay(200);
+		if ((WifiRxFlag) && (strstr(RxBuffer, Ok) != NULL))
 		{
 			WifiRxFlag = 0;
 			for (uint8_t i = 0; i < 30; i++)
@@ -1698,6 +1712,19 @@ void StartWIFITask(void const * argument)
 			tempInfo.statusKom = ((uint16_t)RxBuffer[70] << 8) + ((uint16_t)RxBuffer[71]);
 			// to do:
 			// calculate mean, and status bytes
+			// temperature records are as follows:
+			// upper sample: 1,2,3,4,5,6
+			// Lower Sample: 1,2,3,4,5,6
+			// Upper Heater (...)
+			// Lower Heater
+			// Ambient
+			meanCalc = 0;
+			for (uint8_t i = 0; i < 12; i++)
+			{
+				meanCalc += (int32_t)temps[i];
+			}
+			meanCalc /= 12L;
+			tempInfo.mean = (int16_t)meanCalc;
 		}
 		else
 		{
