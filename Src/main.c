@@ -188,10 +188,8 @@ uint8_t GpsRxBuf[GPS_RXBUF_SIZE];
 
 volatile uint8_t WifiRxFlag = 0;
 volatile uint8_t WifiTxFlag = 0;
-static const uint64_t DSAddr[7] =
-{ 0x2811C4ED09000015, 0x28155BFD09000029, 0x28622CEE090000B8,
-		0x287B8C870A0000A1, 0x2867F7870A00009A, 0x2839149D090000F4,
-		0x2839149D090000F4 };
+static const uint64_t DSAddr[3] =
+{ 0x28C6F3400C000080, 0x2856D4400C000098, 0x288DEF400C000050};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -706,8 +704,8 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : OneWire_Pin */
   GPIO_InitStruct.Pin = OneWire_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(OneWire_GPIO_Port, &GPIO_InitStruct);
 
@@ -1367,6 +1365,18 @@ void StartCommandTask(void const * argument)
 	f_mount(&my_fatfs, SD_Path, 1);
 	WriteToSD((uint8_t*) initMessage, sizeof(initMessage));
 	memset(SDBuffer, 0, sizeof(SDBuffer));
+/*
+ *  Set RTC
+	RawDataBuffer[0] = 0x00;
+	RawDataBuffer[1] = 0x46;
+	RawDataBuffer[2] = 0x21;
+	if (HAL_I2C_Mem_Write(&hi2c2, DS3231Addr, 0x00, 1, RawDataBuffer, 3, 100)
+			== HAL_OK)
+	{
+
+	}
+*/
+
 	/* Infinite loop */
 	for (;;)
 	{
@@ -1549,7 +1559,11 @@ void StartCommandTask(void const * argument)
 		xQueueSend(qToWatchdogHandle, &dataToWatchdog, 10);
 
 		wifiData.status = ErrBuff;
-		xQueueSend(qToWifiSetValHandle, &wifiData, 10);
+
+		if (CycleNb % 5 == 0)
+		{
+			xQueueSend(qToWifiSetValHandle, &wifiData, 10);
+		}
 
 		ErrBuff ^= RUNNING_FLAG;
 
@@ -1701,6 +1715,7 @@ void StartWIFITask(void const * argument)
 		{
 			osDelay(50);
 		}
+		WifiTxFlag = 0;
 		osDelay(200);
 		if ((WifiRxFlag) && (strstr(RxBuffer, Ok) != NULL))
 		{
@@ -1745,7 +1760,7 @@ void StartWIFITask(void const * argument)
 					sizeof(CutCommand), 100);
 		}
 		xQueueSend(qFromWifiHandle, &tempInfo, 0);
-		osDelayUntil(&tick, 1000);
+		osDelayUntil(&tick, 5000);
 	}
   /* USER CODE END StartWIFITask */
 }
