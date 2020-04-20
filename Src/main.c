@@ -1679,6 +1679,7 @@ void StartWIFITask(void const * argument)
 	loraTempInfo_t tempInfo;
 	uint32_t tick;
 	int32_t meanCalc = 0;
+	uint32_t tempStatusCalc = 0;
 	wifi_set_t setData =
 	{ 0x00, 0x00, 0x00,
 	{ 0x0000, 0x0000, 0x0000}, 0x00, 0x00,
@@ -1686,9 +1687,10 @@ void StartWIFITask(void const * argument)
 	memset(TxBuffer, 0, sizeof(TxBuffer));
 	memset(RxBuffer, 0, sizeof(RxBuffer));
 
-	__HAL_UART_ENABLE_IT(&huart4, UART_IT_RXNE);
+	//__HAL_UART_ENABLE_IT(&huart4, UART_IT_RXNE);
 
 	// to do: control ESP - pull gpios/rst pin appropriately
+	// after it is soldered to main board
 
 	/* Infinite loop */
 	for (;;)
@@ -1720,13 +1722,11 @@ void StartWIFITask(void const * argument)
 		if ((WifiRxFlag) && (strstr(RxBuffer, Ok) != NULL))
 		{
 			WifiRxFlag = 0;
-			for (uint8_t i = 0; i < 30; i++)
+			for (uint32_t i = 0; i < 30; i++)
 			{
 				temps[i] = (int16_t) (((uint16_t)RxBuffer[10 + (2 * i)] << 8) + (uint16_t)RxBuffer[11 + (2 * i)]);
 			}
 			tempInfo.statusKom = ((uint16_t)RxBuffer[70] << 8) + ((uint16_t)RxBuffer[71]);
-			// to do:
-			// calculate mean, and status bytes
 			// temperature records are as follows:
 			// upper sample: 1,2,3,4,5,6
 			// Lower Sample: 1,2,3,4,5,6
@@ -1734,12 +1734,35 @@ void StartWIFITask(void const * argument)
 			// Lower Heater
 			// Ambient
 			meanCalc = 0;
-			for (uint8_t i = 0; i < 12; i++)
+			tempStatusCalc = 0;
+			for (uint32_t i = 0; i < 12; i++)
 			{
 				meanCalc += (int32_t)temps[i];
 			}
 			meanCalc /= 12L;
 			tempInfo.mean = (int16_t)meanCalc;
+			
+			for (uint32_t i = 0; i < 12; i++)
+			{
+				uint8_t val = 0;
+				if (temps[i] > 3700)
+				{
+					val = 1;
+				}
+				else if (temps[i] < 3500)
+				{
+					val = 2;
+				}
+				else
+				{
+					// temperature ok
+					// do nothing cause val = 0
+				}
+				tempStatusCalc |=  (val << (2 * i));
+			}
+			tempInfo.highByte = (uint8_t)(tempStatusCalc >> 16);
+			tempInfo.middleByte = (uint8_t)(tempStatusCalc >> 8);
+			tempInfo.lowByte = (uint8_t)(tempStatusCalc);
 		}
 		else
 		{
