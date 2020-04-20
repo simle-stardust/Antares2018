@@ -51,7 +51,7 @@
   /* Includes ------------------------------------------------------------------*/
 
 /* USER CODE BEGIN Includes */
-
+//#define GPS_ON_UART4
 /* USER CODE END Includes */
 
 /* Private define ------------------------------------------------------------*/

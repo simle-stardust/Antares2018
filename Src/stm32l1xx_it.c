@@ -177,6 +177,7 @@ void TIM2_IRQHandler(void)
 /**
 * @brief This function handles UART4 global interrupt.
 */
+#ifndef GPS_ON_UART4
 void UART4_IRQHandler(void)
 {
   /* USER CODE BEGIN UART4_IRQn 0 */
@@ -187,7 +188,7 @@ void UART4_IRQHandler(void)
 
   /* USER CODE END UART4_IRQn 1 */
 }
-
+#endif
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
