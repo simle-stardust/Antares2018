@@ -162,7 +162,9 @@ SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim7;
 
-UART_HandleTypeDef huart4;
+UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart2_rx;
+DMA_HandleTypeDef hdma_usart2_tx;
 
 osThreadId CommandTaskHandle;
 osThreadId LoraTaskHandle;
@@ -180,6 +182,8 @@ osMessageQId qFromDS18Handle;
 osMessageQId qToWifiSetValHandle;
 osMessageQId qFromWifiErrHandle;
 osSemaphoreId GpsBinarySemHandle;
+osSemaphoreId WiFiTxDoneHandle;
+osSemaphoreId WiFiRxDoneHandle;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
@@ -189,8 +193,6 @@ UINT my_error;
 
 uint8_t GpsRxBuf[GPS_RXBUF_SIZE];
 
-volatile uint8_t WifiRxFlag = 0;
-volatile uint8_t WifiTxFlag = 0;
 static const uint64_t DSAddr[3] =
 { 0x28C6F3400C000080, 0x2856D4400C000098, 0x288DEF400C000050};
 /* USER CODE END PV */
@@ -198,12 +200,13 @@ static const uint64_t DSAddr[3] =
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_ADC_Init(void);
 static void MX_I2C2_Init(void);
-static void MX_SPI1_Init(void);
 static void MX_SDIO_SD_Init(void);
-static void MX_UART4_Init(void);
+static void MX_SPI1_Init(void);
 static void MX_TIM7_Init(void);
+static void MX_USART2_UART_Init(void);
 void StartCommandTask(void const * argument);
 void StartLoraTask(void const * argument);
 void StartWIFITask(void const * argument);
@@ -223,83 +226,23 @@ static uint8_t LoraReceive();
 static uint8_t LoraTransmitByte(uint8_t *data, uint8_t size);
 static gps_data_t GpsParse(const char* data);
 
-#ifndef GPS_ON_UART4
-/*
-void USART1_IRQHandler()
-{
-	if ((USART1->SR & USART_SR_IDLE) && (USART1->CR1 & USART_CR1_IDLEIE))
-	{
-		// clear by reading dr
-		volatile uint32_t tmpreg;
-		tmpreg = USART1->SR;
-		(void) tmpreg;
-		tmpreg = USART1->DR;
-		(void) tmpreg;
-		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
-	}
-}
-
-void DMA1_Channel5_IRQHandler()
-{
-	//clear interrupt flag
-	if (((DMA1->ISR) & (DMA_ISR_TCIF5)))
-	{
-		DMA1->IFCR |= DMA_IFCR_CTCIF5;
-		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
-	}
-	if (((DMA1->ISR) & (DMA_ISR_HTIF5)))
-	{
-		DMA1->IFCR |= DMA_IFCR_CHTIF5;
-		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
-	}
-}
-*/
-
-void USART2_IRQHandler()
-{
-	if ((USART2->SR & USART_SR_IDLE) && (USART2->CR1 & USART_CR1_IDLEIE))
-	{
-		// clear by reading dr
-		volatile uint32_t tmpreg;
-		tmpreg = USART2->SR;
-		(void) tmpreg;
-		tmpreg = USART2->DR;
-		(void) tmpreg;
-		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
-	}
-}
-
-void DMA1_Channel6_IRQHandler()
-{
-	//clear interrupt flag
-	if (((DMA1->ISR) & (DMA_ISR_TCIF6)))
-	{
-		DMA1->IFCR |= DMA_IFCR_CTCIF6;
-		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
-	}
-	if (((DMA1->ISR) & (DMA_ISR_HTIF6)))
-	{
-		DMA1->IFCR |= DMA_IFCR_CHTIF6;
-		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
-	}
-}
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-	if (huart->Instance == UART4)
+	if (huart->Instance == USART2)
 	{
-		WifiRxFlag = 1;
+		xSemaphoreGiveFromISR(WiFiRxDoneHandle, NULL);
 	}
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
-	if (huart->Instance == UART4)
+	if (huart->Instance == USART2)
 	{
-		WifiTxFlag = 1;
+		xSemaphoreGiveFromISR(WiFiTxDoneHandle, NULL);
 	}
 }
-#else 
+
 void UART4_IRQHandler()
 {
 	if ((UART4->SR & USART_SR_IDLE) && (UART4->CR1 & USART_CR1_IDLEIE))
@@ -328,7 +271,6 @@ void DMA2_Channel3_IRQHandler()
 		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
 	}
 }
-#endif
 
 
 /* USER CODE END PFP */
@@ -361,12 +303,13 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_ADC_Init();
   MX_I2C2_Init();
-  MX_SPI1_Init();
   MX_SDIO_SD_Init();
-  MX_UART4_Init();
+  MX_SPI1_Init();
   MX_TIM7_Init();
+  MX_USART2_UART_Init();
 
   /* USER CODE BEGIN 2 */
 
@@ -380,6 +323,14 @@ int main(void)
   /* definition and creation of GpsBinarySem */
   osSemaphoreDef(GpsBinarySem);
   GpsBinarySemHandle = osSemaphoreCreate(osSemaphore(GpsBinarySem), 1);
+
+  /* definition and creation of WiFiTxDone */
+  osSemaphoreDef(WiFiTxDone);
+  WiFiTxDoneHandle = osSemaphoreCreate(osSemaphore(WiFiTxDone), 1);
+
+  /* definition and creation of WiFiRxDone */
+  osSemaphoreDef(WiFiRxDone);
+  WiFiRxDoneHandle = osSemaphoreCreate(osSemaphore(WiFiRxDone), 1);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
 	/* add semaphores, ... */
@@ -538,7 +489,6 @@ static void MX_ADC_Init(void)
 
     /**Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion) 
     */
-  /*
   hadc.Instance = ADC1;
   hadc.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
   hadc.Init.Resolution = ADC_RESOLUTION_12B;
@@ -558,10 +508,9 @@ static void MX_ADC_Init(void)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
-*/
+
     /**Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time. 
     */
-  /*
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_4CYCLES;
@@ -569,7 +518,6 @@ static void MX_ADC_Init(void)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
-  */
 
 }
 
@@ -654,23 +602,41 @@ static void MX_TIM7_Init(void)
 
 }
 
-/* UART4 init function */
-static void MX_UART4_Init(void)
+/* USART2 init function */
+static void MX_USART2_UART_Init(void)
 {
-#ifndef GPS_ON_UART4
-  huart4.Instance = UART4;
-  huart4.Init.BaudRate = 115200;
-  huart4.Init.WordLength = UART_WORDLENGTH_8B;
-  huart4.Init.StopBits = UART_STOPBITS_1;
-  huart4.Init.Parity = UART_PARITY_NONE;
-  huart4.Init.Mode = UART_MODE_TX_RX;
-  huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart4.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart4) != HAL_OK)
+
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
-#endif
+
+}
+
+/** 
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void) 
+{
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
+  /* DMA1_Channel7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel7_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel7_IRQn);
+
 }
 
 /** Configure pins as 
@@ -780,7 +746,7 @@ static void MX_GPIO_Init(void)
 uint16_t ReadADC(uint8_t adcnum)
 {
 	ADC_ChannelConfTypeDef adc_ch;
-/*
+
 	switch (adcnum)
 	{
 	case 0:
@@ -788,11 +754,6 @@ uint16_t ReadADC(uint8_t adcnum)
 		adc_ch.Channel = ADC_CHANNEL_19;
 		break;
 	case 1:
-		//ADC lora
-		adc_ch.Channel = ADC_CHANNEL_2;
-		break;
-	case 2:
-		//ADC thermal
 		adc_ch.Channel = ADC_CHANNEL_1;
 		break;
 	default:
@@ -806,62 +767,12 @@ uint16_t ReadADC(uint8_t adcnum)
 	HAL_ADC_Start(&hadc);
 	HAL_ADC_PollForConversion(&hadc, 100);
 	return HAL_ADC_GetValue(&hadc);
-	*/
+
 	return 0;
 }
 
 static void UART_Init()
 {
-#ifndef GPS_ON_UART4
-	/*
-	RCC->APB2ENR |= RCC_APB2ENR_USART1EN;	//clock enable for UART1
-	RCC->AHBENR |= RCC_AHBENR_DMA1EN;
-	//alternate functions of PA9 and PA10 set to UART1 AF=7
-	GPIOA->AFR[1] |= (0x00000770);
-	GPIOA->MODER |= (0x00280000);
-	GPIOA->OSPEEDR |= (0x003C0000);
-	GPIOA->PUPDR |= (0x00140000);
-
-	NVIC_SetPriority(USART1_IRQn, 0x05);
-	NVIC_EnableIRQ(USART1_IRQn);			// set enable IRQ
-
-	NVIC_SetPriority(DMA1_Channel5_IRQn, 0x05);
-	NVIC_EnableIRQ(DMA1_Channel5_IRQn);
-	USART1->BRR = 3333;						//baud rate = 9600
-	// usart+transmitter+receiver enable
-
-	DMA1_Channel5->CMAR = (uint32_t) GpsRxBuf;
-	DMA1_Channel5->CPAR = (uint32_t) &(USART1->DR);
-	DMA1_Channel5->CNDTR = GPS_RXBUF_SIZE;
-	DMA1_Channel5->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_EN | DMA_CCR_HTIE | DMA_CCR_TCIE;
-
-	USART1->CR3 |= USART_CR3_DMAR;
-	USART1->CR1 = USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
-	*/
-
-	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;	//clock enable for UART2
-	RCC->AHBENR |= RCC_AHBENR_DMA1EN;  //USART2 RX uses DMA1 channel6
-	//alternate functions of PA2 and PA3 set to UART2 AF=7
-	GPIOA->AFR[0] |= (0x00007700);
-	GPIOA->MODER |= (0x000000A0);
-	GPIOA->OSPEEDR |= (0x000000F0);
-	GPIOA->PUPDR |= (0x00000050);
-
-	NVIC_SetPriority(USART2_IRQn, 0x05);
-	NVIC_EnableIRQ(USART2_IRQn);			// set enable IRQ
-
-	NVIC_SetPriority(DMA1_Channel6_IRQn, 0x05);
-	NVIC_EnableIRQ(DMA1_Channel6_IRQn);
-	USART2->BRR = 3333;						//baud rate = 9600
-
-	DMA1_Channel6->CMAR = (uint32_t) GpsRxBuf;
-	DMA1_Channel6->CPAR = (uint32_t) &(USART2->DR);
-	DMA1_Channel6->CNDTR = GPS_RXBUF_SIZE;
-	DMA1_Channel6->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_EN | DMA_CCR_HTIE | DMA_CCR_TCIE;
-
-	USART2->CR3 |= USART_CR3_DMAR;
-	USART2->CR1 |= USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_TE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
-#else
 	RCC->APB1ENR |= RCC_APB1ENR_UART4EN;	//clock enable for UART1
 	RCC->AHBENR |= RCC_AHBENR_DMA2EN;
 	//alternate functions of PC10 and PC11 set to UART4 AF=7
@@ -883,7 +794,6 @@ static void UART_Init()
 
 	UART4->CR3 |= USART_CR3_DMAR;
 	UART4->CR1 = USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
-#endif
 }
 
 static inline uint8_t setBit(uint8_t value, uint8_t bit)
@@ -1493,8 +1403,7 @@ void StartCommandTask(void const * argument)
 
 		// read ADCs
 		ADC_ele = ReadADC(0);
-		ADC_lora = ReadADC(1);
-		ADC_thermal = ReadADC(2);
+		ADC_thermal = ReadADC(1);
 
 		SDBufLen = sprintf((char*) SDBuffer, "%u,%u,%u,",
 				ADC_ele, ADC_lora, ADC_thermal);
@@ -1793,7 +1702,6 @@ void StartWIFITask(void const * argument)
 	/* Infinite loop */
 	for (;;)
 	{
-#ifndef GPS_ON_UART4
 		tick = osKernelSysTick();
 		xQueueReceive(qToWifiSetValHandle, &setData, 1000);
 		TxBufLen =
@@ -1803,68 +1711,68 @@ void StartWIFITask(void const * argument)
 						setData.ds18[1], setData.ds18[2],
 						setData.hum, setData.press, setData.lat, setData.lon,
 						setData.alt, setData.status, setData.hdop);
-		HAL_UART_Transmit_IT(&huart4, (uint8_t*) TxBuffer, TxBufLen);
-		while (WifiTxFlag != 1)
-		{
-			osDelay(50);
-		}
-		WifiTxFlag = 0;
+		HAL_UART_Transmit_DMA(&huart2, (uint8_t*) TxBuffer, TxBufLen);
+		// wait for TX done
+		xSemaphoreTake(WiFiTxDoneHandle, 500);
 		strcpy(TxBuffer, GetCommand);
-		HAL_UART_Receive_IT(&huart4, (uint8_t*) RxBuffer, sizeof(RxBuffer));
-		HAL_UART_Transmit_IT(&huart4, (uint8_t*) TxBuffer, sizeof(GetCommand));
-		while (WifiTxFlag != 1)
+		// start listening first
+		HAL_UART_Receive_DMA(&huart2, (uint8_t*) RxBuffer, sizeof(RxBuffer));
+		// transmit data query command
+		HAL_UART_Transmit_DMA(&huart2, (uint8_t*) TxBuffer, sizeof(GetCommand));
+		// first, wait for TX to finish
+		xSemaphoreTake(WiFiTxDoneHandle, 500);
+		// now we wait for RX done
+		if (xSemaphoreTake(WiFiRxDoneHandle, 500) == pdTRUE)
 		{
-			osDelay(50);
-		}
-		WifiTxFlag = 0;
-		osDelay(200);
-		if ((WifiRxFlag) && (strstr(RxBuffer, Ok) != NULL))
-		{
-			WifiRxFlag = 0;
-			for (uint32_t i = 0; i < 30; i++)
+			// if data received, check if it has "MarcinOK" inside
+ 			if (strstr(RxBuffer, Ok) != NULL)
 			{
-				temps[i] = (int16_t) (((uint16_t)RxBuffer[10 + (2 * i)] << 8) + (uint16_t)RxBuffer[11 + (2 * i)]);
-			}
-			tempInfo.statusKom = ((uint16_t)RxBuffer[70] << 8) + ((uint16_t)RxBuffer[71]);
-			// temperature records are as follows:
-			// upper sample: 1,2,3,4,5,6
-			// Lower Sample: 1,2,3,4,5,6
-			// Upper Heater (...)
-			// Lower Heater
-			// Ambient
-			meanCalc = 0;
-			tempStatusCalc = 0;
-			for (uint32_t i = 0; i < 12; i++)
-			{
-				meanCalc += (int32_t)temps[i];
-			}
-			meanCalc /= 12L;
-			tempInfo.mean = (int16_t)meanCalc;
-			
-			for (uint32_t i = 0; i < 12; i++)
-			{
-				uint8_t val = 0;
-				if (temps[i] > 3700)
+				for (uint32_t i = 0; i < 30; i++)
 				{
-					val = 1;
+					temps[i] = (int16_t) (((uint16_t)RxBuffer[10 + (2 * i)] << 8) + (uint16_t)RxBuffer[11 + (2 * i)]);
 				}
-				else if (temps[i] < 3500)
+				tempInfo.statusKom = ((uint16_t)RxBuffer[70] << 8) + ((uint16_t)RxBuffer[71]);
+				// temperature records are as follows:
+				// upper sample: 1,2,3,4,5,6
+				// Lower Sample: 1,2,3,4,5,6
+				// Upper Heater (...)
+				// Lower Heater
+				// Ambient
+				meanCalc = 0;
+				tempStatusCalc = 0;
+				for (uint32_t i = 0; i < 12; i++)
 				{
-					val = 2;
+					meanCalc += (int32_t)temps[i];
 				}
-				else
+				meanCalc /= 12L;
+				tempInfo.mean = (int16_t)meanCalc;
+				
+				for (uint32_t i = 0; i < 12; i++)
 				{
-					// temperature ok
-					// do nothing cause val = 0
+					uint8_t val = 0;
+					if (temps[i] > 3700)
+					{
+						val = 1;
+					}
+					else if (temps[i] < 3500)
+					{
+						val = 2;
+					}
+					else
+					{
+						// temperature ok
+						// do nothing cause val = 0
+					}
+					tempStatusCalc |=  (val << (2 * i));
 				}
-				tempStatusCalc |=  (val << (2 * i));
+				tempInfo.highByte = (uint8_t)(tempStatusCalc >> 16);
+				tempInfo.middleByte = (uint8_t)(tempStatusCalc >> 8);
+				tempInfo.lowByte = (uint8_t)(tempStatusCalc);
 			}
-			tempInfo.highByte = (uint8_t)(tempStatusCalc >> 16);
-			tempInfo.middleByte = (uint8_t)(tempStatusCalc >> 8);
-			tempInfo.lowByte = (uint8_t)(tempStatusCalc);
 		}
 		else
 		{
+			// no data received
 			error = 1;
 			// try to reset ESP?
 			tempInfo.mean = 0xFFFF;
@@ -1878,12 +1786,11 @@ void StartWIFITask(void const * argument)
 		xQueueReceive(qToWifiHandle, &odcinaczFlag, 0);
 		if (odcinaczFlag == 1)
 		{
-			HAL_UART_Transmit(&huart4, (uint8_t*) CutCommand,
+			HAL_UART_Transmit(&huart2, (uint8_t*) CutCommand,
 					sizeof(CutCommand), 100);
 		}
 		xQueueSend(qFromWifiHandle, &tempInfo, 0);
 		osDelayUntil(&tick, 5000);
-#endif
 	}
   /* USER CODE END StartWIFITask */
 }

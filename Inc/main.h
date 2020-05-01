@@ -51,7 +51,7 @@
   /* Includes ------------------------------------------------------------------*/
 
 /* USER CODE BEGIN Includes */
-//#define GPS_ON_UART4
+
 /* USER CODE END Includes */
 
 /* Private define ------------------------------------------------------------*/
@@ -74,8 +74,6 @@
 #define Button_GPIO_Port GPIOA
 #define Adc_Thermal_Pin GPIO_PIN_1
 #define Adc_Thermal_GPIO_Port GPIOA
-#define Adc_LoRa_Pin GPIO_PIN_2
-#define Adc_LoRa_GPIO_Port GPIOA
 #define LoRa_CS_Pin GPIO_PIN_4
 #define LoRa_CS_GPIO_Port GPIOA
 #define LoRa_SCK_Pin GPIO_PIN_5
@@ -108,10 +106,6 @@
 #define Power_LED_GPIO_Port GPIOC
 #define Buzzer_Pin GPIO_PIN_11
 #define Buzzer_GPIO_Port GPIOA
-#define Wifi_TX_Pin GPIO_PIN_10
-#define Wifi_TX_GPIO_Port GPIOC
-#define Wifi_RX_Pin GPIO_PIN_11
-#define Wifi_RX_GPIO_Port GPIOC
 #define Wifi_RST_Pin GPIO_PIN_3
 #define Wifi_RST_GPIO_Port GPIOB
 #define Wifi_GPIO0_Pin GPIO_PIN_6
