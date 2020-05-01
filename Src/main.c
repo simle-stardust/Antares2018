@@ -224,6 +224,7 @@ static uint8_t LoraTransmitByte(uint8_t *data, uint8_t size);
 static gps_data_t GpsParse(const char* data);
 
 #ifndef GPS_ON_UART4
+/*
 void USART1_IRQHandler()
 {
 	if ((USART1->SR & USART_SR_IDLE) && (USART1->CR1 & USART_CR1_IDLEIE))
@@ -249,6 +250,36 @@ void DMA1_Channel5_IRQHandler()
 	if (((DMA1->ISR) & (DMA_ISR_HTIF5)))
 	{
 		DMA1->IFCR |= DMA_IFCR_CHTIF5;
+		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
+	}
+}
+*/
+
+void USART2_IRQHandler()
+{
+	if ((USART2->SR & USART_SR_IDLE) && (USART2->CR1 & USART_CR1_IDLEIE))
+	{
+		// clear by reading dr
+		volatile uint32_t tmpreg;
+		tmpreg = USART2->SR;
+		(void) tmpreg;
+		tmpreg = USART2->DR;
+		(void) tmpreg;
+		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
+	}
+}
+
+void DMA1_Channel6_IRQHandler()
+{
+	//clear interrupt flag
+	if (((DMA1->ISR) & (DMA_ISR_TCIF6)))
+	{
+		DMA1->IFCR |= DMA_IFCR_CTCIF6;
+		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
+	}
+	if (((DMA1->ISR) & (DMA_ISR_HTIF6)))
+	{
+		DMA1->IFCR |= DMA_IFCR_CHTIF6;
 		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
 	}
 }
@@ -507,6 +538,7 @@ static void MX_ADC_Init(void)
 
     /**Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion) 
     */
+  /*
   hadc.Instance = ADC1;
   hadc.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
   hadc.Init.Resolution = ADC_RESOLUTION_12B;
@@ -526,9 +558,10 @@ static void MX_ADC_Init(void)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
-
+*/
     /**Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time. 
     */
+  /*
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_4CYCLES;
@@ -536,6 +569,7 @@ static void MX_ADC_Init(void)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
+  */
 
 }
 
@@ -746,7 +780,7 @@ static void MX_GPIO_Init(void)
 uint16_t ReadADC(uint8_t adcnum)
 {
 	ADC_ChannelConfTypeDef adc_ch;
-
+/*
 	switch (adcnum)
 	{
 	case 0:
@@ -772,11 +806,14 @@ uint16_t ReadADC(uint8_t adcnum)
 	HAL_ADC_Start(&hadc);
 	HAL_ADC_PollForConversion(&hadc, 100);
 	return HAL_ADC_GetValue(&hadc);
+	*/
+	return 0;
 }
 
 static void UART_Init()
 {
 #ifndef GPS_ON_UART4
+	/*
 	RCC->APB2ENR |= RCC_APB2ENR_USART1EN;	//clock enable for UART1
 	RCC->AHBENR |= RCC_AHBENR_DMA1EN;
 	//alternate functions of PA9 and PA10 set to UART1 AF=7
@@ -800,6 +837,30 @@ static void UART_Init()
 
 	USART1->CR3 |= USART_CR3_DMAR;
 	USART1->CR1 = USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
+	*/
+
+	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;	//clock enable for UART2
+	RCC->AHBENR |= RCC_AHBENR_DMA1EN;  //USART2 RX uses DMA1 channel6
+	//alternate functions of PA2 and PA3 set to UART2 AF=7
+	GPIOA->AFR[0] |= (0x00007700);
+	GPIOA->MODER |= (0x000000A0);
+	GPIOA->OSPEEDR |= (0x000000F0);
+	GPIOA->PUPDR |= (0x00000050);
+
+	NVIC_SetPriority(USART2_IRQn, 0x05);
+	NVIC_EnableIRQ(USART2_IRQn);			// set enable IRQ
+
+	NVIC_SetPriority(DMA1_Channel6_IRQn, 0x05);
+	NVIC_EnableIRQ(DMA1_Channel6_IRQn);
+	USART2->BRR = 3333;						//baud rate = 9600
+
+	DMA1_Channel6->CMAR = (uint32_t) GpsRxBuf;
+	DMA1_Channel6->CPAR = (uint32_t) &(USART2->DR);
+	DMA1_Channel6->CNDTR = GPS_RXBUF_SIZE;
+	DMA1_Channel6->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_EN | DMA_CCR_HTIE | DMA_CCR_TCIE;
+
+	USART2->CR3 |= USART_CR3_DMAR;
+	USART2->CR1 |= USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_TE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
 #else
 	RCC->APB1ENR |= RCC_APB1ENR_UART4EN;	//clock enable for UART1
 	RCC->AHBENR |= RCC_AHBENR_DMA2EN;
