@@ -162,9 +162,9 @@ SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim7;
 
-UART_HandleTypeDef huart2;
-DMA_HandleTypeDef hdma_usart2_rx;
-DMA_HandleTypeDef hdma_usart2_tx;
+UART_HandleTypeDef huart4;
+DMA_HandleTypeDef hdma_uart4_rx;
+DMA_HandleTypeDef hdma_uart4_tx;
 
 osThreadId CommandTaskHandle;
 osThreadId LoraTaskHandle;
@@ -206,7 +206,7 @@ static void MX_I2C2_Init(void);
 static void MX_SDIO_SD_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM7_Init(void);
-static void MX_USART2_UART_Init(void);
+static void MX_UART4_Init(void);
 void StartCommandTask(void const * argument);
 void StartLoraTask(void const * argument);
 void StartWIFITask(void const * argument);
@@ -229,7 +229,7 @@ static gps_data_t GpsParse(const char* data);
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-	if (huart->Instance == USART2)
+	if (huart->Instance == UART4)
 	{
 		xSemaphoreGiveFromISR(WiFiRxDoneHandle, NULL);
 	}
@@ -237,37 +237,38 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
-	if (huart->Instance == USART2)
+	if (huart->Instance == UART4)
 	{
 		xSemaphoreGiveFromISR(WiFiTxDoneHandle, NULL);
 	}
 }
 
-void UART4_IRQHandler()
+
+void USART2_IRQHandler()
 {
-	if ((UART4->SR & USART_SR_IDLE) && (UART4->CR1 & USART_CR1_IDLEIE))
+	if ((USART2->SR & USART_SR_IDLE) && (USART2->CR1 & USART_CR1_IDLEIE))
 	{
 		// clear by reading dr
 		volatile uint32_t tmpreg;
-		tmpreg = UART4->SR;
+		tmpreg = USART2->SR;
 		(void) tmpreg;
-		tmpreg = UART4->DR;
+		tmpreg = USART2->DR;
 		(void) tmpreg;
 		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
 	}
 }
 
-void DMA2_Channel3_IRQHandler()
+void DMA1_Channel6_IRQHandler()
 {
 	//clear interrupt flag
-	if (((DMA2->ISR) & (DMA_ISR_TCIF3)))
+	if (((DMA1->ISR) & (DMA_ISR_TCIF6)))
 	{
-		DMA2->IFCR |= DMA_IFCR_CTCIF3;
+		DMA1->IFCR |= DMA_IFCR_CTCIF6;
 		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
 	}
-	if (((DMA2->ISR) & (DMA_ISR_HTIF3)))
+	if (((DMA1->ISR) & (DMA_ISR_HTIF6)))
 	{
-		DMA2->IFCR |= DMA_IFCR_CHTIF3;
+		DMA1->IFCR |= DMA_IFCR_CHTIF6;
 		xSemaphoreGiveFromISR(GpsBinarySemHandle, NULL);
 	}
 }
@@ -309,7 +310,7 @@ int main(void)
   MX_SDIO_SD_Init();
   MX_SPI1_Init();
   MX_TIM7_Init();
-  MX_USART2_UART_Init();
+  MX_UART4_Init();
 
   /* USER CODE BEGIN 2 */
 
@@ -371,15 +372,15 @@ int main(void)
 
   /* Create the queue(s) */
   /* definition and creation of qFromGPS */
-  osMessageQDef(qFromGPS, 4, gps_data_t);
+  osMessageQDef(qFromGPS, 2, gps_data_t);
   qFromGPSHandle = osMessageCreate(osMessageQ(qFromGPS), NULL);
 
   /* definition and creation of qToLora */
-  osMessageQDef(qToLora, 5, loraUPframe_t);
+  osMessageQDef(qToLora, 1, loraUPframe_t);
   qToLoraHandle = osMessageCreate(osMessageQ(qToLora), NULL);
 
   /* definition and creation of qFromLora */
-  osMessageQDef(qFromLora, 10, uint16_t);
+  osMessageQDef(qFromLora, 1, uint16_t);
   qFromLoraHandle = osMessageCreate(osMessageQ(qFromLora), NULL);
 
   /* definition and creation of qToWatchdog */
@@ -387,7 +388,7 @@ int main(void)
   qToWatchdogHandle = osMessageCreate(osMessageQ(qToWatchdog), NULL);
 
   /* definition and creation of qToWifi */
-  osMessageQDef(qToWifi, 2, uint8_t);
+  osMessageQDef(qToWifi, 1, uint8_t);
   qToWifiHandle = osMessageCreate(osMessageQ(qToWifi), NULL);
 
   /* definition and creation of qFromWifi */
@@ -399,7 +400,7 @@ int main(void)
   qFromDS18Handle = osMessageCreate(osMessageQ(qFromDS18), NULL);
 
   /* definition and creation of qToWifiSetVal */
-  osMessageQDef(qToWifiSetVal, 2, wifi_set_t);
+  osMessageQDef(qToWifiSetVal, 1, wifi_set_t);
   qToWifiSetValHandle = osMessageCreate(osMessageQ(qToWifiSetVal), NULL);
 
   /* definition and creation of qFromWifiErr */
@@ -602,19 +603,19 @@ static void MX_TIM7_Init(void)
 
 }
 
-/* USART2 init function */
-static void MX_USART2_UART_Init(void)
+/* UART4 init function */
+static void MX_UART4_Init(void)
 {
 
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX_RX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart2) != HAL_OK)
+  huart4.Instance = UART4;
+  huart4.Init.BaudRate = 115200;
+  huart4.Init.WordLength = UART_WORDLENGTH_8B;
+  huart4.Init.StopBits = UART_STOPBITS_1;
+  huart4.Init.Parity = UART_PARITY_NONE;
+  huart4.Init.Mode = UART_MODE_TX_RX;
+  huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart4.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart4) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
@@ -627,15 +628,15 @@ static void MX_USART2_UART_Init(void)
 static void MX_DMA_Init(void) 
 {
   /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
-  /* DMA1_Channel6_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
-  /* DMA1_Channel7_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel7_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel7_IRQn);
+  /* DMA2_Channel3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Channel3_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Channel3_IRQn);
+  /* DMA2_Channel5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Channel5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Channel5_IRQn);
 
 }
 
@@ -773,27 +774,28 @@ uint16_t ReadADC(uint8_t adcnum)
 
 static void UART_Init()
 {
-	RCC->APB1ENR |= RCC_APB1ENR_UART4EN;	//clock enable for UART1
-	RCC->AHBENR |= RCC_AHBENR_DMA2EN;
-	//alternate functions of PC10 and PC11 set to UART4 AF=7
-	GPIOC->AFR[1] |= (0x00008800);
-	GPIOC->MODER |= (0x00A00000);
-	GPIOC->OSPEEDR |= (0x00F00000);
+	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;	//clock enable for UART2
+	RCC->AHBENR |= RCC_AHBENR_DMA1EN;  //USART2 RX uses DMA1 channel6
+	//alternate functions of PA2 and PA3 set to UART2 AF=7
+	GPIOA->AFR[0] |= (0x00007700);
+	GPIOA->MODER |= (0x000000A0);
+	GPIOA->OSPEEDR |= (0x000000F0);
+	GPIOA->PUPDR |= (0x00000050);
 
-	NVIC_SetPriority(UART4_IRQn, 0x05);
-	NVIC_EnableIRQ(UART4_IRQn);			// set enable IRQ
+	NVIC_SetPriority(USART2_IRQn, 0x05);
+	NVIC_EnableIRQ(USART2_IRQn);			// set enable IRQ
 
-	NVIC_SetPriority(DMA2_Channel3_IRQn, 0x05);
-	NVIC_EnableIRQ(DMA2_Channel3_IRQn);
-	UART4->BRR = 3333;						//baud rate = 9600
+	NVIC_SetPriority(DMA1_Channel6_IRQn, 0x05);
+	NVIC_EnableIRQ(DMA1_Channel6_IRQn);
+	USART2->BRR = 3333;						//baud rate = 9600
 
-	DMA2_Channel3->CMAR = (uint32_t) GpsRxBuf;
-	DMA2_Channel3->CPAR = (uint32_t) &(UART4->DR);
-	DMA2_Channel3->CNDTR = GPS_RXBUF_SIZE;
-	DMA2_Channel3->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_EN | DMA_CCR_HTIE | DMA_CCR_TCIE;
+	DMA1_Channel6->CMAR = (uint32_t) GpsRxBuf;
+	DMA1_Channel6->CPAR = (uint32_t) &(USART2->DR);
+	DMA1_Channel6->CNDTR = GPS_RXBUF_SIZE;
+	DMA1_Channel6->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_EN | DMA_CCR_HTIE | DMA_CCR_TCIE;
 
-	UART4->CR3 |= USART_CR3_DMAR;
-	UART4->CR1 = USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
+	USART2->CR3 |= USART_CR3_DMAR;
+	USART2->CR1 |= USART_CR1_UE | USART_CR1_PEIE | USART_CR1_RE | USART_CR1_TE | USART_CR1_RXNEIE | USART_CR1_IDLEIE;
 }
 
 static inline uint8_t setBit(uint8_t value, uint8_t bit)
@@ -1711,14 +1713,14 @@ void StartWIFITask(void const * argument)
 						setData.ds18[1], setData.ds18[2],
 						setData.hum, setData.press, setData.lat, setData.lon,
 						setData.alt, setData.status, setData.hdop);
-		HAL_UART_Transmit_DMA(&huart2, (uint8_t*) TxBuffer, TxBufLen);
+		HAL_UART_Transmit_DMA(&huart4, (uint8_t*) TxBuffer, TxBufLen);
 		// wait for TX done
 		xSemaphoreTake(WiFiTxDoneHandle, 500);
 		strcpy(TxBuffer, GetCommand);
 		// start listening first
-		HAL_UART_Receive_DMA(&huart2, (uint8_t*) RxBuffer, sizeof(RxBuffer));
+		HAL_UART_Receive_DMA(&huart4, (uint8_t*) RxBuffer, sizeof(RxBuffer));
 		// transmit data query command
-		HAL_UART_Transmit_DMA(&huart2, (uint8_t*) TxBuffer, sizeof(GetCommand));
+		HAL_UART_Transmit_DMA(&huart4, (uint8_t*) TxBuffer, sizeof(GetCommand));
 		// first, wait for TX to finish
 		xSemaphoreTake(WiFiTxDoneHandle, 500);
 		// now we wait for RX done
@@ -1786,7 +1788,7 @@ void StartWIFITask(void const * argument)
 		xQueueReceive(qToWifiHandle, &odcinaczFlag, 0);
 		if (odcinaczFlag == 1)
 		{
-			HAL_UART_Transmit(&huart2, (uint8_t*) CutCommand,
+			HAL_UART_Transmit(&huart4, (uint8_t*) CutCommand,
 					sizeof(CutCommand), 100);
 		}
 		xQueueSend(qFromWifiHandle, &tempInfo, 0);
