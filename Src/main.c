@@ -225,6 +225,7 @@ static void Lora_Init();
 static uint8_t LoraReceive();
 static uint8_t LoraTransmitByte(uint8_t *data, uint8_t size);
 static gps_data_t GpsParse(const char* data);
+void LoRa_SendToGround(loraUPframe_t* data, loraTempInfo_t* tempInfo, uint16_t recvFrame);
 
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
@@ -728,10 +729,16 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : LoRa_RX_Pin Thermal_Signal_Pin Buzzer_Signal_Pin Wifi_RST_Pin 
                            Wifi_GPIO0_Pin Wifi_GPIO2_Pin Wifi_GPIO4_Pin Wifi_GPIO5_Pin */
   GPIO_InitStruct.Pin = LoRa_RX_Pin|Thermal_Signal_Pin|Buzzer_Signal_Pin|Wifi_RST_Pin 
-                          |Wifi_GPIO0_Pin|Wifi_GPIO2_Pin|Wifi_GPIO4_Pin|Wifi_GPIO5_Pin;
+                          |Wifi_GPIO0_Pin|Wifi_GPIO2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Button_Pin */
+  GPIO_InitStruct.Pin = Wifi_GPIO4_Pin|Wifi_GPIO5_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : OneWire_Pin */
@@ -869,7 +876,7 @@ static void Lora_Init()
 	// Spreading Factor 12, LNA gain set by the internal AGC loop, RX timeout MSB = 0b11
 	writeLoraRegister(0x1E, 0xC4);   //bylo C5
 	// RX timeout LSB = 0xFF
-	writeLoraRegister(0x1F, 0x8F);   //bylo A0
+	writeLoraRegister(0x1F, 0x1E);   //bylo A0
 
 	// Sync Word = 0x34 (LoRaWAN sync word)
 	writeLoraRegister(0x39, 0x34);
@@ -1132,6 +1139,37 @@ static int16_t ReadDS18B20(uint64_t ROM)
 	if (CalculatedCRC != memory[8])
 		iTemperatura = 4040;
 	return iTemperatura;
+}
+
+void LoRa_SendToGround(loraUPframe_t* data, loraTempInfo_t* tempInfo, uint16_t recvFrame)
+{
+	uint8_t Payload[23];
+	Payload[0] = (data->alt >> 24);
+	Payload[1] = (data->alt >> 16);
+	Payload[2] = (data->alt >> 8);
+	Payload[3] = (data->alt & 0xFF);
+	Payload[4] = (data->lat >> 24);
+	Payload[5] = (data->lat >> 16);
+	Payload[6] = (data->lat >> 8);
+	Payload[7] = (data->lat & 0xFF);
+	Payload[8] = (data->lon >> 24);
+	Payload[9] = (data->lon >> 16);
+	Payload[10] = (data->lon >> 8);
+	Payload[11] = (data->lon & 0xFF);
+	Payload[12] = (tempInfo->mean >> 8);
+	Payload[13] = (tempInfo->mean & 0xFF);
+	Payload[14] = tempInfo->highByte;
+	Payload[15] = tempInfo->middleByte;
+	Payload[16] = tempInfo->lowByte;
+	Payload[17] = (uint8_t) (recvFrame >> 8);
+	Payload[18] = (uint8_t) (recvFrame & 0xFF);
+	Payload[19] = (data->status >> 8);
+	Payload[20] = (data->status & 0xFF);
+	Payload[21] = (data->statusKom >> 8);
+	Payload[22] = (data->statusKom & 0xFF);
+	Payload[23] = (data->hdop >> 8);
+	Payload[24] = (data->hdop & 0xFF);
+	LoraWANTransmitByte(Payload, 25);
 }
 
 static uint16_t WriteToSD(uint8_t* buf, uint8_t len)
@@ -1461,7 +1499,7 @@ void StartCommandTask(void const * argument)
 		DataToSend.hdop = gpsData.hdop;
 		DataToSend.status = ErrBuff;
 		DataToSend.statusKom = 0x0000;
-		if (CycleNb % 60 == 0)
+		if (CycleNb % 200 == 0)
 		{
 			xQueueSend(qToLoraHandle, &DataToSend, 2);
 		}
@@ -1472,24 +1510,33 @@ void StartCommandTask(void const * argument)
 			switch (LoraDnMsg)
 			{
 				case 0xFFFF:
-					ErrBuff |= LORA_ERR;
-					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
-					HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_SET);
+					// this can happen when we receive alien frame
+					// ignore
+					//ErrBuff |= LORA_ERR;
+					//HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
+					//HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_SET);
 					break;
 				case 0xFFFE:
 					ErrBuff |= LORA_ERR;
 					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
 					HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_SET);
 					break;
-				case 0x5555:
+				case 0x0005:
+					ErrBuff &= ~LORA_ERR;
+					ErrBuff &= ~ODCINACZ_FLAG;
+					odcinaczFlag = 0;
+					HAL_GPIO_WritePin(D4_GPIO_Port, D4_Pin, GPIO_PIN_SET);
+					xQueueSend(qToWifiHandle, &odcinaczFlag, 0);
+					break;
+				case 0x0002:
 					ErrBuff &= ~LORA_ERR;
 					ErrBuff |= ODCINACZ_FLAG;
 					odcinaczFlag = 1;
 					HAL_GPIO_WritePin(D4_GPIO_Port, D4_Pin, GPIO_PIN_RESET);
 					xQueueSend(qToWifiHandle, &odcinaczFlag, 0);
 					break;
-				case 0x0002:
 				case 0x0003:
+				case 0x0004:
 					ErrBuff &= ~LORA_ERR;
 					//zapal diode
 					PowerLEDFlagActivate = 1;
@@ -1498,6 +1545,39 @@ void StartCommandTask(void const * argument)
 				case 0x0001:
 					HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin, GPIO_PIN_RESET);
 					ErrBuff &= ~LORA_ERR;
+					break;
+				case 0x0006:
+					// Start
+					ErrBuff &= ~LORA_ERR;
+					ErrBuff |= FLIGHT_IS_ON;
+					break;
+				case 0x0007:
+					// Stop
+					ErrBuff &= ~LORA_ERR;
+					ErrBuff &= ~FLIGHT_IS_ON;
+					break;
+				case 0x0010:
+					// Set stardust state to 0
+					ErrBuff &= ~LORA_ERR;
+					ErrBuff &= ~(STATUS_BYTE0|STATUS_BYTE1|STATUS_BYTE2);
+					break;
+				case 0x0011:
+					// Set stardust state to 1
+					ErrBuff &= ~LORA_ERR;
+					ErrBuff &= ~(STATUS_BYTE0|STATUS_BYTE1|STATUS_BYTE2);
+					ErrBuff |= STATUS_BYTE0;
+					break;
+				case 0x0012:
+					// Set stardust state to 2
+					ErrBuff &= ~LORA_ERR;
+					ErrBuff &= ~(STATUS_BYTE0|STATUS_BYTE1|STATUS_BYTE2);
+					ErrBuff |= STATUS_BYTE1;
+					break;
+				case 0x0013:
+					// Set stardust state to 3
+					ErrBuff &= ~LORA_ERR;
+					ErrBuff &= ~(STATUS_BYTE0|STATUS_BYTE1|STATUS_BYTE2);
+					ErrBuff |= STATUS_BYTE0 | STATUS_BYTE1;
 					break;
 				default:
 					break;
@@ -1548,13 +1628,17 @@ void StartCommandTask(void const * argument)
 			if (PowerLEDFlagActivate)
 			{
 				PowerLEDFlagActivate = 0;
-				if (LoraDnMsg == 0x0002)
+				if (LoraDnMsg == 0x0003)
 				{
 					dataToWatchdog = 1;
+					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_RESET);
+					ErrBuff |= POWER_LED_FLAG;
 				}
 				else
 				{
 					dataToWatchdog = 2;
+					HAL_GPIO_WritePin(D2_GPIO_Port, D2_Pin, GPIO_PIN_SET);
+					ErrBuff &= ~POWER_LED_FLAG;
 				}
 			}
 			else
@@ -1591,83 +1675,73 @@ void StartLoraTask(void const * argument)
   /* USER CODE BEGIN StartLoraTask */
 	Lora_Init();
 	uint32_t tick = osKernelSysTick();
+	uint32_t send_tick = 0;
+	uint32_t rx_tick = 0x8FFFFFFF;
 	loraUPframe_t DataToSend;
 	uint16_t ReceivedFrame = 0xFFFF;
 	loraTempInfo_t tempInfo;
 	uint8_t ReceivedNbOfBytes;
-	uint8_t Payload[23];
 	uint8_t FifoCurrRxAddr;
 	uint8_t ReceivedData[50];
-	uint8_t LoraStatus;
-	//osDelay(5000);
+	
+	// wait for queues to be filled
+	osDelay(2000);
+	memset(&DataToSend, 0x00, sizeof(DataToSend));
+	memset(&tempInfo, 0x00, sizeof(tempInfo));
+	xQueueReceive(qToLoraHandle, &DataToSend, 0);
+	xQueueReceive(qFromWifiHandle, &tempInfo, 0);
+	send_tick = osKernelSysTick();
+	LoRa_SendToGround(&DataToSend, &tempInfo, ReceivedFrame);
+
 	/* Infinite loop */
 	for (;;)
 	{
 		tick = osKernelSysTick();
-		if (xQueueReceive(qToLoraHandle, &DataToSend, 1000))
+		if (tick - send_tick > 200000)
 		{
+			xQueueReceive(qToLoraHandle, &DataToSend, 0);
 			xQueueReceive(qFromWifiHandle, &tempInfo, 0);
-			Payload[0] = (DataToSend.alt >> 24);
-			Payload[1] = (DataToSend.alt >> 16);
-			Payload[2] = (DataToSend.alt >> 8);
-			Payload[3] = (DataToSend.alt & 0xFF);
-			Payload[4] = (DataToSend.lat >> 24);
-			Payload[5] = (DataToSend.lat >> 16);
-			Payload[6] = (DataToSend.lat >> 8);
-			Payload[7] = (DataToSend.lat & 0xFF);
-			Payload[8] = (DataToSend.lon >> 24);
-			Payload[9] = (DataToSend.lon >> 16);
-			Payload[10] = (DataToSend.lon >> 8);
-			Payload[11] = (DataToSend.lon & 0xFF);
-			Payload[12] = (tempInfo.mean >> 8);
-			Payload[13] = (tempInfo.mean & 0xFF);
-			Payload[14] = tempInfo.highByte;
-			Payload[15] = tempInfo.middleByte;
-			Payload[16] = tempInfo.lowByte;
-			Payload[17] = (uint8_t) (ReceivedFrame >> 8);
-			Payload[18] = (uint8_t) (ReceivedFrame & 0xFF);
-			Payload[19] = (DataToSend.status >> 8);
-			Payload[20] = (DataToSend.status & 0xFF);
-			Payload[21] = (DataToSend.statusKom >> 8);
-			Payload[22] = (DataToSend.statusKom & 0xFF);
-			Payload[23] = (DataToSend.hdop >> 8);
-			Payload[24] = (DataToSend.hdop & 0xFF);
-			LoraStatus = LoraWANTransmitByte(Payload, 25);
+			send_tick = osKernelSysTick();
+			LoRa_SendToGround(&DataToSend, &tempInfo, ReceivedFrame);
 			HAL_GPIO_WritePin(D4_GPIO_Port, D4_Pin, GPIO_PIN_RESET);
-			ReceivedNbOfBytes = LoraReceive();
+			osDelay(100);
 			HAL_GPIO_WritePin(D4_GPIO_Port, D4_Pin, GPIO_PIN_SET);
-			if (ReceivedNbOfBytes)
+		}
+		ReceivedNbOfBytes = LoraReceive();
+		if (ReceivedNbOfBytes)
+		{
+			readLoraRegister(0x10, &FifoCurrRxAddr);
+			writeLoraRegister(0x0D, FifoCurrRxAddr);
+			memset(ReceivedData, 0, sizeof(ReceivedData));
+			for (int i = 0; i < ReceivedNbOfBytes; i++)
 			{
-				readLoraRegister(0x10, &FifoCurrRxAddr);
-				writeLoraRegister(0x0D, FifoCurrRxAddr);
-				memset(ReceivedData, 0, sizeof(ReceivedData));
-				for (int i = 0; i < ReceivedNbOfBytes; i++)
-				{
-					readLoraRegister(0x00, &ReceivedData[i]);
-				}
-				if (LoraWANParseDN(ReceivedData, ReceivedNbOfBytes))
-				{
-					ReceivedFrame = (ReceivedData[9] << 8) | (ReceivedData[10]);
-				}
-				else
-				{
-					ReceivedFrame = 0xFFFF;
-				}
+				readLoraRegister(0x00, &ReceivedData[i]);
+			}
+			if (LoraWANParseDN(ReceivedData, ReceivedNbOfBytes))
+			{
+				rx_tick = osKernelSysTick();
+				ReceivedFrame = (ReceivedData[9] << 8) | (ReceivedData[10]);
 			}
 			else
 			{
-				if (LoraStatus != 0x00)
-				{
-					ReceivedFrame = 0xFFFE;
-				}
-				else
-				{
-					ReceivedFrame = 0xFFFF;
-				}
+				ReceivedFrame = 0xFFFF;
 			}
-			xQueueSend(qFromLoraHandle, &ReceivedFrame, 5);
 		}
-		osDelayUntil(&tick, 60000);
+		else
+		{
+			tick = osKernelSysTick();
+			if (tick - rx_tick > 180000)
+			{
+				ReceivedFrame = 0xFFFE;
+			}
+			else
+			{
+				// rx still not timedout
+				ReceivedFrame = 0x0001;
+			}
+		}
+		xQueueSend(qFromLoraHandle, &ReceivedFrame, 5);
+		osDelay(10);
 	}
   /* USER CODE END StartLoraTask */
 }
@@ -1695,6 +1769,12 @@ void StartWIFITask(void const * argument)
 			0x00000000, 0x00000000, 0x00000000, 0x0000 };
 	memset(TxBuffer, 0, sizeof(TxBuffer));
 	memset(RxBuffer, 0, sizeof(RxBuffer));
+
+	HAL_GPIO_WritePin(Wifi_RST_GPIO_Port, Wifi_RST_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(Wifi_GPIO0_GPIO_Port, Wifi_GPIO0_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(Wifi_GPIO2_GPIO_Port, Wifi_GPIO2_Pin, GPIO_PIN_SET);
+	HAL_Delay(1000);
+
 
 	//__HAL_UART_ENABLE_IT(&huart4, UART_IT_RXNE);
 
@@ -1724,7 +1804,7 @@ void StartWIFITask(void const * argument)
 		// first, wait for TX to finish
 		xSemaphoreTake(WiFiTxDoneHandle, 500);
 		// now we wait for RX done
-		if (xSemaphoreTake(WiFiRxDoneHandle, 500) == pdTRUE)
+		if (xSemaphoreTake(WiFiRxDoneHandle, 1000) == pdTRUE)
 		{
 			// if data received, check if it has "MarcinOK" inside
  			if (strstr(RxBuffer, Ok) != NULL)
@@ -1891,7 +1971,7 @@ void StartDS18Task(void const * argument)
 	uint32_t BeginTick = 0;
 	/* Infinite loop */
 	HAL_GPIO_WritePin(OneWire_PULLUP_GPIO_Port, OneWire_PULLUP_Pin, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(Thermal_Signal_Internal_GPIO_Port, Thermal_Signal_Internal_Pin, GPIO_PIN_RESET);
+	//HAL_GPIO_WritePin(Thermal_Signal_Internal_GPIO_Port, Thermal_Signal_Internal_Pin, GPIO_PIN_RESET);
 	for (;;)
 	{
 		BeginTick = osKernelSysTick();

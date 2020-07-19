@@ -121,25 +121,26 @@
 #define DATA_MODE 0x01
 #define I2CERROR_MODE 0x02
 
-#define I2C_PRESSURE_ERR 	(uint16_t)0x0001
-#define I2C_RTC_ERR      	(uint16_t)0x0002
-#define POWER_LED_FLAG   	(uint16_t)0x0004
-#define I2C_MAX30205_ERR 	(uint16_t)0x0008
-#define I2C_HDC1080_ERR  	(uint16_t)0x0010
-#define I2C_INA3221_ERR  	(uint16_t)0x0020
-#define I2C_GYRO_ERR     	(uint16_t)0x0040
-#define I2C_ACC_ERR      	(uint16_t)0x0080
-#define I2C_BARO_ERR     	(uint16_t)0x0100
-#define DS18_ERR			(uint16_t)0x0200
-#define SD_ERR				(uint16_t)0x0400
-#define GPS_ERR				(uint16_t)0x0800
-#define WIFI_ERR			(uint16_t)0x1000
-#define LORA_ERR			(uint16_t)0x2000
-#define ODCINACZ_FLAG		(uint16_t)0x4000
-#define RUNNING_FLAG		(uint16_t)0x8000
-static const char error_strings[17][17] = {"I2C_PRESSURE_ERR", "I2C_RTC_ERR",
-		"POWER_LED_FLAG", "I2C_MAX30205_ERR","I2C_HDC1080_ERR","I2C_INA3221_ERR",
-		"I2C_GYRO_ERR", "I2C_ACC_ERR","I2C_BARO_ERR","DS18_ERR","SD_ERR",
+#define STATUS_BYTE0        (uint16_t)0x0001
+#define STATUS_BYTE1        (uint16_t)0x0002
+#define STATUS_BYTE2        (uint16_t)0x0004
+#define I2C_PRESSURE_ERR    (uint16_t)0x0008
+#define I2C_RTC_ERR         (uint16_t)0x0010
+#define POWER_LED_FLAG      (uint16_t)0x0020
+#define FLIGHT_IS_ON        (uint16_t)0x0040
+#define I2C_ACC_ERR         (uint16_t)0x0080
+#define I2C_BARO_ERR        (uint16_t)0x0100
+#define DS18_ERR            (uint16_t)0x0200
+#define SD_ERR              (uint16_t)0x0400
+#define GPS_ERR             (uint16_t)0x0800
+#define WIFI_ERR            (uint16_t)0x1000
+#define LORA_ERR            (uint16_t)0x2000
+#define ODCINACZ_FLAG       (uint16_t)0x4000
+#define RUNNING_FLAG        (uint16_t)0x8000
+
+static const char error_strings[17][17] = {"STATUS_BYTE0", "STATUS_BYTE1", "STATUS_BYTE2",
+    "I2C_PRESSURE_ERR", "I2C_RTC_ERR", "POWER_LED_FLAG", "FLIGHT_IS_ON", 
+    "I2C_ACC_ERR", "I2C_BARO_ERR", "DS18_ERR", "SD_ERR",
 		"GPS_ERR","WIFI_ERR","LORA_ERR", "ODCINACZ_FLAG", "RUNNING_FLAG"
 };
 /* USER CODE END Private defines */
